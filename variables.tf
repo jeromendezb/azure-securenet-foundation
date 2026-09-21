@@ -1,47 +1,52 @@
+variable "workload" {
+  description = "Nombre del workload/proyecto, usado en la convencion de nombres"
+  type        = string
+  default     = "securenet"
+}
+
+variable "environment" {
+  description = "Entorno de despliegue"
+  type        = string
+  default     = "dev"
+}
+
 variable "location" {
-  description = "Región de Azure donde se despliegan los recursos"
+  description = "Region de azure"
   type        = string
   default     = "eastus"
 }
 
-variable "resource_group_name" {
-  description = "Nombre del resource group"
+variable "location_short" {
+  description = "Abreviatura de la region"
   type        = string
-  default     = "rg-terraform-lab1"
-}
-
-variable "virtual_network_name"{
-    description= "nombre de la vnet"
-    type = string 
-    default = "vnet_terraform_lab1"
-}
-
-variable "subnet_name1"{
-    description = "nombre de la subnet1"
-    type = string 
-    default = "subnet1_terraform_lab1"
-}
-
-variable "subnet_name2"{
-    description = "nombre de la subnet2"
-    type = string 
-    default = "subnet2_terraform_lab1"
+  default     = "eus"
 }
 
 variable "vnet_address_space" {
-  description = "Rango de direcciones de la VNet"
+  description = "Rango CIDR de la Vnet"
   type        = string
   default     = "10.0.0.0/16"
 }
 
-variable "subnet1_prefix" {
-  description = "Rango de direcciones de la subnet 1"
+variable "snet_app_prefix" {
+  description = "Rango CIDR de la subnet de aplicacion"
   type        = string
   default     = "10.0.1.0/24"
 }
 
-variable "subnet2_prefix" {
-  description = "Rango de direcciones de la subnet 2"
+variable "snet_mgmt_prefix" {
+  description = "Rango CIDR de la subnet de gestion"
   type        = string
   default     = "10.0.2.0/24"
+}
+
+locals {
+  name_suffix = "${var.workload}-${var.environment}-${var.location_short}-001"
+
+  common_tags = {
+    project     = var.workload
+    environment = var.environment
+    owner       = "jeromendezb"
+    managed_by  = "terraform"
+  }
 }
