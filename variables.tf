@@ -50,3 +50,27 @@ locals {
     managed_by  = "terraform"
   }
 }
+
+variable "snet_bastion_prefix" {
+  description = "Rango CIDR de AzureBastionSubnet (minimo /26 por requisito de azure)"
+  type        = string
+  default     = "10.0.3.0/26"
+}
+
+variable "vm_size" {
+  description = "Tamaño de la VM de aplicación"
+  type        = string
+  default     = "Standard_F1als_v7"
+}
+
+variable "admin_username" {
+  description = "Usuario administrador de la VM"
+  type        = string
+  default     = "azureadmin"
+}
+
+variable "ssh_public_key_path" {
+  description = "Ruta al archivo de clave publica SSH"
+  type        = string
+  default     = "~/.ssh/securenet_lab.pub"
+}
