@@ -93,7 +93,7 @@ The `protect-main` ruleset requires this check to pass before merging,
 requires a pull request for every change to `main`, and blocks force
 pushes and branch deletion. It has no bypass list.
 
-Verified with a negative test in PR #2: a deliberately broken resource
+Verified with a negative test in PR #3: a deliberately broken resource
 reference made the check fail, and the ruleset blocked the merge.
 
 No Azure credentials are stored in GitHub. Running `terraform plan` in CI
