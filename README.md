@@ -1,5 +1,7 @@
 # SecureNet — Segmented Azure Network Foundation (Terraform)
 
+[![Terraform CI](https://github.com/jeromendezb/azure-securenet-foundation/actions/workflows/terraform-ci.yml/badge.svg)](https://github.com/jeromendezb/azure-securenet-foundation/actions/workflows/terraform-ci.yml)
+
 Infrastructure-as-Code foundation for a segmented Azure network where **no virtual
 machine exposes a management port to the Internet**. Built with Terraform, following
 the Microsoft Cloud Adoption Framework (CAF) naming convention.
@@ -76,6 +78,26 @@ stored in this repository.
 **Everything tagged.** All resources carry `project`, `environment`, `owner` and
 `managed_by = terraform`, enabling cost allocation per project and signalling that
 resources must not be modified manually.
+
+## Continuous integration
+
+Every pull request to `main` runs [`terraform-ci.yml`](.github/workflows/terraform-ci.yml):
+
+| Step | What it catches |
+|---|---|
+| `terraform fmt -check -recursive` | Non-standard formatting |
+| `terraform init -backend=false` | Provider download issues, without touching state or Azure |
+| `terraform validate` | Syntax errors, invalid arguments, references to undeclared resources |
+
+The `protect-main` ruleset requires this check to pass before merging,
+requires a pull request for every change to `main`, and blocks force
+pushes and branch deletion. It has no bypass list.
+
+Verified with a negative test in PR #2: a deliberately broken resource
+reference made the check fail, and the ruleset blocked the merge.
+
+No Azure credentials are stored in GitHub. Running `terraform plan` in CI
+is planned using OIDC federated credentials.
 
 ## Repository layout
 
@@ -171,7 +193,5 @@ Real failures encountered while building this, diagnosed and documented:
 
 ## Next steps
 
-- CI/CD pipeline running `fmt`, `validate`, `plan` and security scanning (Checkov,
-  Trivy) on every pull request.
 - Remote state backend in Azure Storage.
 - Capture behavioural evidence of the NSG rules once VM quota is granted.
