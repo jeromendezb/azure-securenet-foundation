@@ -128,6 +128,10 @@ resource "azurerm_linux_virtual_machine" "app" {
   disable_password_authentication = true
   tags                            = local.common_tags
 
+  identity {
+    type = "SystemAssigned"
+  }
+
   admin_ssh_key {
     username   = var.admin_username
     public_key = file(pathexpand(var.ssh_public_key_path))
@@ -169,6 +173,11 @@ resource "azurerm_linux_virtual_machine" "mgmt" {
   disable_password_authentication = true
   tags                            = local.common_tags
 
+  # Identity with no Key Vault role: used to verify that RBAC denies access
+  identity {
+    type = "SystemAssigned"
+  }
+
   admin_ssh_key {
     username   = var.admin_username
     public_key = file(pathexpand(var.ssh_public_key_path))
@@ -185,4 +194,34 @@ resource "azurerm_linux_virtual_machine" "mgmt" {
     sku       = "server"
     version   = "latest"
   }
+}
+
+data "azurerm_client_config" "current" {}
+
+resource "azurerm_key_vault" "main" {
+  name                       = "kv-${local.name_suffix}"
+  location                   = azurerm_resource_group.main.location
+  resource_group_name        = azurerm_resource_group.main.name
+  tenant_id                  = data.azurerm_client_config.current.tenant_id
+  sku_name                   = "standard"
+  purge_protection_enabled   = false # Lab only: production must enable purge protection (see README)
+  soft_delete_retention_days = 7
+  enable_rbac_authorization  = true
+
+  tags = local.common_tags
+}
+
+resource "azurerm_role_assignment" "app_kv_secrets_user" {
+  scope                = azurerm_key_vault.main.id
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = azurerm_linux_virtual_machine.app.identity[0].principal_id
+}
+
+
+# Grants the identity running Terraform (today: the operator's user) rights to manage secrets.
+# When deployments move to the CI pipeline, this must be revisited.
+resource "azurerm_role_assignment" "operator_kv_secrets_officer" {
+  scope                = azurerm_key_vault.main.id
+  role_definition_name = "Key Vault Secrets Officer"
+  principal_id         = data.azurerm_client_config.current.object_id
 }

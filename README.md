@@ -79,6 +79,26 @@ stored in this repository.
 `managed_by = terraform`, enabling cost allocation per project and signalling that
 resources must not be modified manually.
 
+## Secrets management
+
+The application VM needs a database password. Instead of storing it on the
+VM or in code, it lives in Azure Key Vault, and the VM reads it at runtime
+with its own managed identity. No credential is stored anywhere.
+
+| Resource | Purpose |
+|---|---|
+| `azurerm_key_vault.main` | Stores the secret. RBAC authorization mode, 7-day soft delete |
+| Managed identity on `vm-app` | Authenticates the VM to Entra ID with no stored credential |
+| `app_kv_secrets_user` role assignment | `Key Vault Secrets User`, scoped to this vault only |
+| Managed identity on `vm-mgmt` | Control identity with no vault role, used to prove RBAC denies access |
+| `operator_kv_secrets_officer` role assignment | Lets the identity running Terraform create secrets |
+
+The secret value is created with Azure CLI, outside Terraform, so it never
+reaches the state file.
+
+**Verified** ([evidence](docs/evidence/keyvault-access-test.md)): no token →
+401, identity without role → 403 `ForbiddenByRbac`, application identity → 200.
+
 ## Continuous integration
 
 Every pull request to `main` runs [`terraform-ci.yml`](.github/workflows/terraform-ci.yml):
@@ -123,21 +143,30 @@ ssh-keygen -t rsa -b 4096 -f ~/.ssh/securenet_lab
 
 ## Deployment
 
-Authentication uses a Service Principal through environment variables, the same way a
-CI/CD pipeline would — never a personal user account:
+**Current state (lab):** deployments run from the operator's workstation using
+the operator's Azure CLI session. When no `ARM_*` environment variables are
+set, the azurerm provider falls back to Azure CLI credentials.
 
-```bash
-export ARM_CLIENT_ID="<app-id>"
-export ARM_CLIENT_SECRET="<secret>"
-export ARM_TENANT_ID="<tenant-id>"
-export ARM_SUBSCRIPTION_ID="<subscription-id>"
-
+```powershell
+az login
+az account show   # confirm which identity will run Terraform
 terraform init
-terraform fmt
+terraform fmt -check
 terraform validate
 terraform plan -out=tfplan
 terraform apply tfplan
 ```
+
+**Why not the Service Principal:** this configuration creates role
+assignments (`Microsoft.Authorization/roleAssignments/write`). The existing
+Service Principal has `Contributor`, which cannot create role assignments,
+so `apply` would fail with `403 AuthorizationFailed`. Granting it `Owner`
+would let an automation credential give any role to anyone, so that option
+was rejected.
+
+**Target state:** deployments move to the CI pipeline using an OIDC federated
+identity (no stored secret), with `Role Based Access Control Administrator`
+restricted by a condition to the specific roles this configuration assigns.
 
 ## Verification
 
@@ -180,6 +209,9 @@ terraform destroy
   one with the specific inbound and outbound rules Bastion requires.
 - **The OS image uses `version = "latest"`.** Convenient for a lab; production pins an
   exact image version so deployments stay reproducible.
+- Key Vault diagnostic logs are not enabled yet, so secret reads are not recorded.
+- Key Vault public network access is enabled. Production would use a private endpoint.
+- Key Vault purge protection is disabled (lab only).
 
 ## Evidence
 
