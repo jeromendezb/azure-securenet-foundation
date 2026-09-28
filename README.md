@@ -151,7 +151,7 @@ is planned using OIDC federated credentials.
 
 ## Prerequisites
 
-- Terraform 1.x (CI runs 1.16.2) with the `azurerm` provider `~> 3.0`
+- Terraform `>= 1.16, < 2.0` (enforced by `required_version`; CI runs 1.16.2) with the `azurerm` provider `~> 3.0`
 - Azure CLI
 - An Azure subscription with quota for a general-purpose VM family
 - An SSH key pair:
