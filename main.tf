@@ -67,18 +67,6 @@ resource "azurerm_network_security_group" "app" {
     source_address_prefix      = "Internet"
     destination_address_prefix = "*"
   }
-
-    security_rule {
-    name                       = "test-allow-ssh-from-internet"
-    priority                   = 200
-    direction                  = "Inbound"
-    access                     = "Allow"
-    protocol                   = "Tcp"
-    source_port_range          = "*"
-    destination_port_range     = "22"
-    source_address_prefix      = "*"
-    destination_address_prefix = "*"
-  }
 }
 
 resource "azurerm_subnet_network_security_group_association" "app" {
