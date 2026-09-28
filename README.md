@@ -27,13 +27,13 @@ graph TB
     end
     subgraph VNet["VNet 10.0.0.0/16"]
         subgraph BAS["AzureBastionSubnet 10.0.3.0/26"]
-            B[Azure Bastion + Public IP]
+            B[Azure Bastion + Public IP — optional]
         end
         subgraph APP["snet-app 10.0.1.0/24 — nsg-app"]
-            VM[Linux VM — no public IP]
+            VM[vm-app — no public IP]
         end
         subgraph MGMT["snet-mgmt 10.0.2.0/24 — nsg-mgmt"]
-            M[Management tier]
+            M[vm-mgmt]
         end
     end
     ADM -->|HTTPS 443| B
@@ -50,15 +50,18 @@ graph TB
 | Subnet | `AzureBastionSubnet` (`10.0.3.0/26`) | Required name and size for Azure Bastion |
 | NSG | `nsg-app-securenet-dev-eus-001` | Blocks management ports from the Internet |
 | NSG | `nsg-mgmt-securenet-dev-eus-001` | Blocks all traffic coming from `snet-app` |
-| Bastion | `bas-securenet-dev-eus-001` | Administrative access without public IPs on VMs |
+| Bastion + Public IP | `bas-securenet-dev-eus-001` | Optional (`enable_bastion`, off by default). Administrative access without public IPs on VMs |
 | VM | `vm-app-securenet-dev-eus-001` | Ubuntu 24.04 LTS, SSH key authentication only |
+| VM | `vm-mgmt-securenet-dev-eus-001` | Management tier. Identity with no vault role (negative control) |
+| Key Vault | `kv-securenet-dev-eus-001` | Stores the application secret. RBAC authorization mode |
+| Log Analytics | `log-securenet-dev-eus-001` | Receives Key Vault audit logs (`AuditEvent`) |
 
 ## Security controls
 
 **No public IP on workload VMs.** The network interface intentionally omits
 `public_ip_address_id`. Administrative access goes through Azure Bastion over HTTPS,
-so port 22 is never exposed to the Internet — the single most scanned port for
-brute-force attacks alongside RDP 3389.
+so port 22 is never exposed to the Internet — one of the two most scanned ports for
+brute-force attacks, with RDP 3389.
 
 **Lateral movement containment.** By default, Azure allows all traffic inside a VNet
 (rule `AllowVnetInBound`, priority 65000). `nsg-mgmt` overrides it with an explicit
@@ -81,9 +84,9 @@ resources must not be modified manually.
 
 ## Secrets management
 
-The application VM needs a database password. Instead of storing it on the
-VM or in code, it lives in Azure Key Vault, and the VM reads it at runtime
-with its own managed identity. No credential is stored anywhere.
+The application VM needs a database password. Instead of storing it on the VM or
+in code, it lives in Azure Key Vault. The VM holds no credential to reach the vault:
+it authenticates at runtime with its own managed identity.
 
 | Resource | Purpose |
 |---|---|
@@ -104,20 +107,26 @@ reaches the state file.
 
 ## Continuous integration
 
-Every pull request to `main` runs [`terraform-ci.yml`](.github/workflows/terraform-ci.yml):
+Every pull request to `main` runs two jobs from [`terraform-ci.yml`](.github/workflows/terraform-ci.yml):
 
-| Step | What it catches |
-|---|---|
-| `terraform fmt -check -recursive` | Non-standard formatting |
-| `terraform init -backend=false` | Provider download issues, without touching state or Azure |
-| `terraform validate` | Syntax errors, invalid arguments, references to undeclared resources |
+| Job | Step | What it catches |
+|---|---|---|
+| Validate Terraform | `terraform fmt -check -recursive` | Non-standard formatting |
+| | `terraform init -backend=false` | Provider download issues, without touching state or Azure |
+| | `terraform validate` | Syntax errors, invalid arguments, undeclared references |
+| Checkov scan | Checkov 3.2.20 (pinned) | Security misconfigurations in the Terraform code |
 
-The `protect-main` ruleset requires this check to pass before merging,
-requires a pull request for every change to `main`, and blocks force
-pushes and branch deletion. It has no bypass list.
+Checkov findings were triaged: accepted risks carry a written justification
+in the code (`#checkov:skip`), and pending fixes are marked `TEMPORARY` with
+a link to their issue.
 
-Verified with a negative test in PR #3: a deliberately broken resource
-reference made the check fail, and the ruleset blocked the merge.
+The `protect-main` ruleset requires both checks to pass, requires a pull
+request for every change to `main`, and blocks force pushes and branch
+deletion. It has no bypass list.
+
+Negative tests:
+- PR #3: a broken resource reference made **Validate Terraform** fail; merge blocked.
+- A test PR that added a rule opening SSH to the Internet made **Checkov scan** fail; merge blocked.
 
 No Azure credentials are stored in GitHub. Running `terraform plan` in CI
 is planned using OIDC federated credentials.
@@ -126,16 +135,23 @@ is planned using OIDC federated credentials.
 
 ```
 .
+├── .github/workflows/
+│   └── terraform-ci.yml         # CI: fmt, validate and Checkov on every PR
 ├── providers.tf                 # Provider and version pinning
 ├── variables.tf                 # Inputs and naming/tagging locals
-├── main.tf                      # Network, NSGs, Bastion, VM
+├── main.tf                      # Network, NSGs, Bastion, VMs, Key Vault, logging
+├── scripts/
+│   └── test-kv-access.sh        # Key Vault access test, run inside the VMs
+├── queries/
+│   └── kv-secret-reads.kql      # Audit query for secret reads
 └── docs/
+    ├── evidence/                # Test results backing each security claim
     └── incidents/               # Incident reports from real failures
 ```
 
 ## Prerequisites
 
-- Terraform >= 1.6
+- Terraform 1.x (CI runs 1.16.2) with the `azurerm` provider `~> 3.0`
 - Azure CLI
 - An Azure subscription with quota for a general-purpose VM family
 - An SSH key pair:
@@ -159,6 +175,7 @@ terraform validate
 terraform plan -out=tfplan
 terraform apply tfplan
 ```
+
 Azure Bastion is disabled by default because it bills hourly. Enable it only
 when interactive access is needed: `terraform apply -var="enable_bastion=true"`.
 
@@ -194,9 +211,11 @@ the association is verified explicitly, not assumed.
 | Resource | Approx. cost |
 |---|---|
 | VNet, subnets, NSGs | Free |
-| Azure Bastion (Basic) | ~$0.19 / hour |
-| Public IP (Standard) | ~$0.005 / hour |
-| VM (2 vCPU general purpose) | ~$0.10 / hour |
+| Azure Bastion (Basic), only when `enable_bastion = true` | ~$0.19 / hour |
+| Bastion public IP (Standard), only when `enable_bastion = true` | ~$0.005 / hour |
+| VMs (2 × 2 vCPU general purpose) | ~$0.10 / hour each |
+| Key Vault (Standard) | Per operation; negligible at lab volume |
+| Log Analytics | Per GB ingested; negligible at lab volume |
 
 Bastion bills per hour whether or not it is used. The lab is designed to be deployed,
 verified, and destroyed in the same session:
@@ -211,16 +230,17 @@ terraform destroy
   single operator. A shared Azure Storage backend is required before this runs in a
   pipeline or with more than one engineer.
 - **`AzureBastionSubnet` has no NSG.** Valid and common, but production would attach
-  one with the specific inbound and outbound rules Bastion requires.
+  one with the specific inbound and outbound rules Bastion requires (#9).
 - **The OS image uses `version = "latest"`.** Convenient for a lab; production pins an
   exact image version so deployments stay reproducible.
-- No alert rule on denied secret access yet: logs are collected, but nobody is notified.
-- Key Vault public network access is enabled. Production would use a private endpoint.
-- Key Vault purge protection is disabled (lab only).
+- **No alert on denied secret reads.** Logs are collected, but nobody is notified.
+- **Key Vault public network access is enabled.** Production uses a private endpoint (#8).
+- **Key Vault purge protection is disabled.** Lab only, so the vault can be redeployed.
 
 ## Evidence
 
 - [Network segmentation and administrative access](docs/evidence/segmentation-test.md)
+- [Key Vault access control (401 / 403 / 200) and audit logs](docs/evidence/keyvault-access-test.md)
 
 ## Incidents
 
@@ -230,5 +250,8 @@ Real failures encountered while building this, diagnosed and documented:
 
 ## Next steps
 
+- Key Vault private endpoint and private DNS zone (#8).
+- NSG on `AzureBastionSubnet` with the rules Bastion requires (#9).
 - Remote state backend in Azure Storage.
-- Capture behavioural evidence of the NSG rules once VM quota is granted.
+- Deploy from CI with OIDC federated credentials.
+- Alert rule on denied secret reads (403).
