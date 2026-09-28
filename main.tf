@@ -75,6 +75,7 @@ resource "azurerm_subnet_network_security_group_association" "app" {
 }
 
 resource "azurerm_subnet" "bastion" {
+  #checkov:skip=CKV2_AZURE_31:TEMPORARY. Fix tracked in #9 (Bastion subnet NSG).
   name                 = "AzureBastionSubnet"
   resource_group_name  = azurerm_resource_group.main.name
   virtual_network_name = azurerm_virtual_network.main.name
@@ -121,6 +122,7 @@ resource "azurerm_network_interface" "app" {
 }
 
 resource "azurerm_linux_virtual_machine" "app" {
+  #checkov:skip=CKV_AZURE_50:Extensions are required by the Azure Monitor agent and by az vm run-command, used for testing. Who can install extensions is limited by RBAC.
   name                            = "vm-app-${local.name_suffix}"
   location                        = azurerm_resource_group.main.location
   resource_group_name             = azurerm_resource_group.main.name
@@ -166,6 +168,7 @@ resource "azurerm_network_interface" "mgmt" {
 }
 
 resource "azurerm_linux_virtual_machine" "mgmt" {
+  #checkov:skip=CKV_AZURE_50:Extensions are required by the Azure Monitor agent and by az vm run-command, used for testing. Who can install extensions is limited by RBAC.
   name                            = "vm-mgmt-${local.name_suffix}"
   location                        = azurerm_resource_group.main.location
   resource_group_name             = azurerm_resource_group.main.name
@@ -201,6 +204,11 @@ resource "azurerm_linux_virtual_machine" "mgmt" {
 data "azurerm_client_config" "current" {}
 
 resource "azurerm_key_vault" "main" {
+  #checkov:skip=CKV_AZURE_110:Lab only. With purge protection a destroyed vault cannot be purged for 7 days, which blocks redeploying it. Required in production.
+  #checkov:skip=CKV_AZURE_42:Same cause as CKV_AZURE_110. Soft delete is enabled (mandatory in Azure); only purge protection is off, for the lab.
+  #checkov:skip=CKV_AZURE_189:TEMPORARY. Fix tracked in #8 (private endpoint).
+  #checkov:skip=CKV_AZURE_109:TEMPORARY. Fix tracked in #8 (private endpoint).
+  #checkov:skip=CKV2_AZURE_32:TEMPORARY. Fix tracked in #8 (private endpoint).
   name                       = "kv-${local.name_suffix}"
   location                   = azurerm_resource_group.main.location
   resource_group_name        = azurerm_resource_group.main.name

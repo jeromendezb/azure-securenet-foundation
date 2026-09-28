@@ -32,3 +32,18 @@ jobs:
 
       - name: Validate configuration
         run: terraform validate
+     
+     
+  security-scan:
+    name: Checkov scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Scan Terraform with Checkov
+        run: >-
+          docker run --rm -v "${{ github.workspace }}:/tf"
+          bridgecrew/checkov:3.2.20
+          -d /tf --compact --quiet     
