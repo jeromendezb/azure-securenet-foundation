@@ -80,3 +80,9 @@ variable "enable_bastion" {
   type        = bool
   default     = false
 }
+
+variable "snet_pe_prefix" {
+  description = "Rango CIDR de la subnet del Private Endpoint"
+  type        = string
+  default     = "10.0.4.0/26"
+}

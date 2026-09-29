@@ -35,10 +35,17 @@ graph TB
         subgraph MGMT["snet-mgmt 10.0.2.0/24 — nsg-mgmt"]
             M[vm-mgmt]
         end
+        subgraph PE["snet-pe 10.0.4.0/26"]
+            P[Private endpoint 10.0.4.4]
+        end
     end
+    KV[(Key Vault — public access disabled)]
     ADM -->|HTTPS 443| B
     B -->|SSH over private network| VM
     VM -.->|BLOCKED by NSG| M
+    VM -->|HTTPS 443, private DNS| P
+    M -->|HTTPS 443, private DNS| P
+    P --> KV
 ```
 
 | Resource | Name | Purpose |
@@ -48,12 +55,16 @@ graph TB
 | Subnet | `snet-app` (`10.0.1.0/24`) | Application workloads |
 | Subnet | `snet-mgmt` (`10.0.2.0/24`) | Management tier |
 | Subnet | `AzureBastionSubnet` (`10.0.3.0/26`) | Required name and size for Azure Bastion |
+| Subnet | `snet-pe` (`10.0.4.0/26`) | Private endpoints |
 | NSG | `nsg-app-securenet-dev-eus-001` | Blocks management ports from the Internet |
 | NSG | `nsg-mgmt-securenet-dev-eus-001` | Blocks all traffic coming from `snet-app` |
 | Bastion + Public IP | `bas-securenet-dev-eus-001` | Optional (`enable_bastion`, off by default). Administrative access without public IPs on VMs |
 | VM | `vm-app-securenet-dev-eus-001` | Ubuntu 24.04 LTS, SSH key authentication only |
 | VM | `vm-mgmt-securenet-dev-eus-001` | Management tier. Identity with no vault role (negative control) |
-| Key Vault | `kv-securenet-dev-eus-001` | Stores the application secret. RBAC authorization mode |
+| Key Vault | `kv-securenet-dev-eus-001` | Stores the application secret. RBAC authorization mode, public network access disabled |
+| Private endpoint | `pe-kv-securenet-dev-eus-001` | Private IP for the Key Vault inside `snet-pe` |
+| Private DNS zone | `privatelink.vaultcore.azure.net` | Resolves the vault name to its private IP inside the VNet |
+| DNS zone VNet link | `pdzvlink-kv-securenet-dev-eus-001` | Makes the VNet use the private DNS zone |
 | Log Analytics | `log-securenet-dev-eus-001` | Receives Key Vault audit logs (`AuditEvent`) |
 
 ## Security controls
@@ -105,6 +116,15 @@ reaches the state file.
 **Audit logging:** every secret read is logged to Log Analytics
 (`AuditEvent`). Query: [`kv-secret-reads.kql`](queries/kv-secret-reads.kql).
 
+**Network isolation:** the vault only accepts traffic through its private
+endpoint (`public_network_access_enabled = false`, network ACL default
+`Deny`, no trusted-service bypass). A valid identity is not enough from the
+Internet: requests are rejected with `403 ForbiddenByConnection` before
+identity is evaluated. Operators write secrets from `vm-mgmt` inside the VNet
+([ADR-002](docs/adr/adr-002-keyvault-secret-write-access.md)).
+Verified ([evidence](docs/evidence/keyvault-private-endpoint-test.md)),
+including the failure mode when the private DNS zone is not linked to the VNet.
+
 ## Continuous integration
 
 Every pull request to `main` runs two jobs from [`terraform-ci.yml`](.github/workflows/terraform-ci.yml):
@@ -145,6 +165,7 @@ is planned using OIDC federated credentials.
 ├── queries/
 │   └── kv-secret-reads.kql      # Audit query for secret reads
 └── docs/
+    ├── adr/                     # Architecture decision records
     ├── evidence/                # Test results backing each security claim
     └── incidents/               # Incident reports from real failures
 ```
@@ -215,6 +236,8 @@ the association is verified explicitly, not assumed.
 | Bastion public IP (Standard), only when `enable_bastion = true` | ~$0.005 / hour |
 | VMs (2 × 2 vCPU general purpose) | ~$0.10 / hour each |
 | Key Vault (Standard) | Per operation; negligible at lab volume |
+| Private endpoint | ~$0.01 / hour, plus data processed |
+| Private DNS zone | Small fixed monthly fee per zone |
 | Log Analytics | Per GB ingested; negligible at lab volume |
 
 Bastion bills per hour whether or not it is used. The lab is designed to be deployed,
@@ -233,14 +256,23 @@ terraform destroy
   one with the specific inbound and outbound rules Bastion requires (#9).
 - **The OS image uses `version = "latest"`.** Convenient for a lab; production pins an
   exact image version so deployments stay reproducible.
+- **`snet-pe` has no NSG.** Any subnet in the VNet can reach the private
+  endpoint. Fix requires an NSG and `private_endpoint_network_policies`
+  enabled on the subnet (#13).
+- **Writing a secret requires Bastion and an interactive session on `vm-mgmt`.**
+  Accepted for the lab ([ADR-002](docs/adr/adr-002-keyvault-secret-write-access.md));
+  production target is a VPN or a CI runner inside the VNet.
+- **Perpetual diff after apply.** `terraform plan` keeps proposing in-place
+  updates to `vm_agent_platform_updates_enabled` on both VMs and to the
+  diagnostic setting's `AllMetrics` block, values Azure sets on its own (#14).
 - **No alert on denied secret reads.** Logs are collected, but nobody is notified.
-- **Key Vault public network access is enabled.** Production uses a private endpoint (#8).
 - **Key Vault purge protection is disabled.** Lab only, so the vault can be redeployed.
 
 ## Evidence
 
 - [Network segmentation and administrative access](docs/evidence/segmentation-test.md)
 - [Key Vault access control (401 / 403 / 200) and audit logs](docs/evidence/keyvault-access-test.md)
+- [Key Vault private endpoint and private DNS (before / after VNet link)](docs/evidence/keyvault-private-endpoint-test.md)
 
 ## Incidents
 
@@ -250,8 +282,9 @@ Real failures encountered while building this, diagnosed and documented:
 
 ## Next steps
 
-- Key Vault private endpoint and private DNS zone (#8).
+- NSG on `snet-pe` restricting access to the private endpoint (#13).
 - NSG on `AzureBastionSubnet` with the rules Bastion requires (#9).
+- Resolve the perpetual diff (#14).
 - Remote state backend in Azure Storage.
 - Deploy from CI with OIDC federated credentials.
 - Alert rule on denied secret reads (403).
