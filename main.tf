@@ -206,17 +206,20 @@ data "azurerm_client_config" "current" {}
 resource "azurerm_key_vault" "main" {
   #checkov:skip=CKV_AZURE_110:Lab only. With purge protection a destroyed vault cannot be purged for 7 days, which blocks redeploying it. Required in production.
   #checkov:skip=CKV_AZURE_42:Same cause as CKV_AZURE_110. Soft delete is enabled (mandatory in Azure); only purge protection is off, for the lab.
-  #checkov:skip=CKV_AZURE_189:TEMPORARY. Fix tracked in #8 (private endpoint).
-  #checkov:skip=CKV_AZURE_109:TEMPORARY. Fix tracked in #8 (private endpoint).
-  #checkov:skip=CKV2_AZURE_32:TEMPORARY. Fix tracked in #8 (private endpoint).
-  name                       = "kv-${local.name_suffix}"
-  location                   = azurerm_resource_group.main.location
-  resource_group_name        = azurerm_resource_group.main.name
-  tenant_id                  = data.azurerm_client_config.current.tenant_id
-  sku_name                   = "standard"
-  purge_protection_enabled   = false # Lab only: production must enable purge protection (see README)
-  soft_delete_retention_days = 7
-  enable_rbac_authorization  = true
+  name                          = "kv-${local.name_suffix}"
+  location                      = azurerm_resource_group.main.location
+  resource_group_name           = azurerm_resource_group.main.name
+  tenant_id                     = data.azurerm_client_config.current.tenant_id
+  sku_name                      = "standard"
+  purge_protection_enabled      = false # Lab only: production must enable purge protection (see README)
+  soft_delete_retention_days    = 7
+  enable_rbac_authorization     = true
+  public_network_access_enabled = false
+
+  network_acls {
+    default_action = "Deny"
+    bypass         = "None"
+  }
 
   tags = local.common_tags
 }
@@ -254,4 +257,51 @@ resource "azurerm_monitor_diagnostic_setting" "kv" {
   enabled_log {
     category = "AuditEvent"
   }
+}
+
+resource "azurerm_subnet" "pe" {
+  #checkov:skip=CKV2_AZURE_31:TEMPORARY. Fix tracked in #13 (NSG for private endpoint subnet).
+  name                 = "snet-pe"
+  resource_group_name  = azurerm_resource_group.main.name
+  virtual_network_name = azurerm_virtual_network.main.name
+  address_prefixes     = [var.snet_pe_prefix]
+}
+
+# Private DNS zone: lets resources in the VNet resolve the vault to its private IP.
+resource "azurerm_private_dns_zone" "kv" {
+  name                = "privatelink.vaultcore.azure.net"
+  resource_group_name = azurerm_resource_group.main.name
+
+  tags = local.common_tags
+}
+
+# Private endpoint: gives the vault a private IP inside snet-pe.
+resource "azurerm_private_endpoint" "kv" {
+  name                = "pe-kv-${local.name_suffix}"
+  location            = azurerm_resource_group.main.location
+  resource_group_name = azurerm_resource_group.main.name
+  subnet_id           = azurerm_subnet.pe.id
+  private_service_connection {
+    name                           = "psc-kv-${local.name_suffix}"
+    private_connection_resource_id = azurerm_key_vault.main.id
+    is_manual_connection           = false
+    subresource_names              = ["vault"]
+  }
+
+
+  private_dns_zone_group {
+    name                 = "pdzg-kv-${local.name_suffix}"
+    private_dns_zone_ids = [azurerm_private_dns_zone.kv.id]
+  }
+
+  tags = local.common_tags
+}
+
+resource "azurerm_private_dns_zone_virtual_network_link" "kv" {
+  name                  = "pdzvlink-kv-${local.name_suffix}"
+  resource_group_name   = azurerm_resource_group.main.name
+  private_dns_zone_name = azurerm_private_dns_zone.kv.name
+  virtual_network_id    = azurerm_virtual_network.main.id
+  registration_enabled  = false
+  tags                  = local.common_tags
 }
