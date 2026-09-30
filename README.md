@@ -196,6 +196,9 @@ terraform validate
 terraform plan -out=tfplan
 terraform apply tfplan
 ```
+After `apply`, `terraform plan` must report `No changes`. Values that Azure
+sets on its own after creation are declared in the code instead of ignored
+with `ignore_changes`, so a manual change to them still shows up as drift.
 
 Azure Bastion is disabled by default because it bills hourly. Enable it only
 when interactive access is needed: `terraform apply -var="enable_bastion=true"`.
@@ -262,9 +265,6 @@ terraform destroy
 - **Writing a secret requires Bastion and an interactive session on `vm-mgmt`.**
   Accepted for the lab ([ADR-002](docs/adr/adr-002-keyvault-secret-write-access.md));
   production target is a VPN or a CI runner inside the VNet.
-- **Perpetual diff after apply.** `terraform plan` keeps proposing in-place
-  updates to `vm_agent_platform_updates_enabled` on both VMs and to the
-  diagnostic setting's `AllMetrics` block, values Azure sets on its own (#14).
 - **No alert on denied secret reads.** Logs are collected, but nobody is notified.
 - **Key Vault purge protection is disabled.** Lab only, so the vault can be redeployed.
 
