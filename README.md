@@ -284,6 +284,7 @@ Real failures encountered while building this, diagnosed and documented:
 
 - NSG on `snet-pe` restricting access to the private endpoint (#13).
 - NSG on `AzureBastionSubnet` with the rules Bastion requires (#9).
+- Resolve the perpetual diff (#14).
 - Remote state backend in Azure Storage.
 - Deploy from CI with OIDC federated credentials.
 - Alert rule on denied secret reads (403).
