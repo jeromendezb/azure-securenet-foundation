@@ -26,6 +26,14 @@ resource "azurerm_subnet" "app" {
   address_prefixes     = [var.snet_app_prefix]
 }
 
+resource "azurerm_subnet" "pe" {
+  #checkov:skip=CKV2_AZURE_31:TEMPORARY. Fix tracked in #13 (NSG for private endpoint subnet).
+  name                 = "snet-pe"
+  resource_group_name  = azurerm_resource_group.main.name
+  virtual_network_name = azurerm_virtual_network.main.name
+  address_prefixes     = [var.snet_pe_prefix]
+}
+
 resource "azurerm_network_security_group" "mgmt" {
   name                = "nsg-mgmt-${local.name_suffix}"
   location            = azurerm_resource_group.main.location
@@ -122,15 +130,17 @@ resource "azurerm_network_interface" "app" {
 }
 
 resource "azurerm_linux_virtual_machine" "app" {
+  # Azure enables this after creation; declared so plans stay clean and manual changes are still detected.
   #checkov:skip=CKV_AZURE_50:Extensions are required by the Azure Monitor agent and by az vm run-command, used for testing. Who can install extensions is limited by RBAC.
-  name                            = "vm-app-${local.name_suffix}"
-  location                        = azurerm_resource_group.main.location
-  resource_group_name             = azurerm_resource_group.main.name
-  size                            = var.vm_size
-  admin_username                  = var.admin_username
-  network_interface_ids           = [azurerm_network_interface.app.id]
-  disable_password_authentication = true
-  tags                            = local.common_tags
+  name                              = "vm-app-${local.name_suffix}"
+  location                          = azurerm_resource_group.main.location
+  resource_group_name               = azurerm_resource_group.main.name
+  size                              = var.vm_size
+  admin_username                    = var.admin_username
+  network_interface_ids             = [azurerm_network_interface.app.id]
+  disable_password_authentication   = true
+  tags                              = local.common_tags
+  vm_agent_platform_updates_enabled = true
 
   identity {
     type = "SystemAssigned"
@@ -168,16 +178,17 @@ resource "azurerm_network_interface" "mgmt" {
 }
 
 resource "azurerm_linux_virtual_machine" "mgmt" {
+  # Azure enables this after creation; declared so plans stay clean and manual changes are still detected.
   #checkov:skip=CKV_AZURE_50:Extensions are required by the Azure Monitor agent and by az vm run-command, used for testing. Who can install extensions is limited by RBAC.
-  name                            = "vm-mgmt-${local.name_suffix}"
-  location                        = azurerm_resource_group.main.location
-  resource_group_name             = azurerm_resource_group.main.name
-  size                            = var.vm_size
-  admin_username                  = var.admin_username
-  network_interface_ids           = [azurerm_network_interface.mgmt.id]
-  disable_password_authentication = true
-  tags                            = local.common_tags
-
+  name                              = "vm-mgmt-${local.name_suffix}"
+  location                          = azurerm_resource_group.main.location
+  resource_group_name               = azurerm_resource_group.main.name
+  size                              = var.vm_size
+  admin_username                    = var.admin_username
+  network_interface_ids             = [azurerm_network_interface.mgmt.id]
+  disable_password_authentication   = true
+  tags                              = local.common_tags
+  vm_agent_platform_updates_enabled = true
   # Identity with no Key Vault role: used to verify that RBAC denies access
   identity {
     type = "SystemAssigned"
@@ -257,14 +268,13 @@ resource "azurerm_monitor_diagnostic_setting" "kv" {
   enabled_log {
     category = "AuditEvent"
   }
-}
 
-resource "azurerm_subnet" "pe" {
-  #checkov:skip=CKV2_AZURE_31:TEMPORARY. Fix tracked in #13 (NSG for private endpoint subnet).
-  name                 = "snet-pe"
-  resource_group_name  = azurerm_resource_group.main.name
-  virtual_network_name = azurerm_virtual_network.main.name
-  address_prefixes     = [var.snet_pe_prefix]
+  # Metrics are intentionally not sent; declared because Azure adds this category on its own.
+  metric {
+    category = "AllMetrics"
+    enabled  = false
+  }
+
 }
 
 # Private DNS zone: lets resources in the VNet resolve the vault to its private IP.
