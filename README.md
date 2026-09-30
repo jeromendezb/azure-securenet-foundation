@@ -35,7 +35,7 @@ graph TB
         subgraph MGMT["snet-mgmt 10.0.2.0/24 — nsg-mgmt"]
             M[vm-mgmt]
         end
-        subgraph PE["snet-pe 10.0.4.0/26"]
+        subgraph PE["snet-pe 10.0.4.0/26 — nsg-pe"]
             P[Private endpoint 10.0.4.4]
         end
     end
@@ -58,6 +58,7 @@ graph TB
 | Subnet | `snet-pe` (`10.0.4.0/26`) | Private endpoints |
 | NSG | `nsg-app-securenet-dev-eus-001` | Blocks management ports from the Internet |
 | NSG | `nsg-mgmt-securenet-dev-eus-001` | Blocks all traffic coming from `snet-app` |
+| NSG | `nsg-pe-securenet-dev-eus-001` | Allows HTTPS to the private endpoint only from `snet-app` and `snet-mgmt` |
 | Bastion + Public IP | `bas-securenet-dev-eus-001` | Optional (`enable_bastion`, off by default). Administrative access without public IPs on VMs |
 | VM | `vm-app-securenet-dev-eus-001` | Ubuntu 24.04 LTS, SSH key authentication only |
 | VM | `vm-mgmt-securenet-dev-eus-001` | Management tier. Identity with no vault role (negative control) |
@@ -125,6 +126,10 @@ identity is evaluated. Operators write secrets from `vm-mgmt` inside the VNet
 Verified ([evidence](docs/evidence/keyvault-private-endpoint-test.md)),
 including the failure mode when the private DNS zone is not linked to the VNet.
 
+Inside the VNet, `nsg-pe` allows HTTPS to the private endpoint only from
+`snet-app` and `snet-mgmt`; traffic from any other subnet is dropped
+([evidence](docs/evidence/pe-subnet-nsg-test.md)).
+
 ## Continuous integration
 
 Every pull request to `main` runs two jobs from [`terraform-ci.yml`](.github/workflows/terraform-ci.yml):
@@ -161,7 +166,8 @@ is planned using OIDC federated credentials.
 ├── variables.tf                 # Inputs and naming/tagging locals
 ├── main.tf                      # Network, NSGs, Bastion, VMs, Key Vault, logging
 ├── scripts/
-│   └── test-kv-access.sh        # Key Vault access test, run inside the VMs
+│   ├── test-kv-access.sh        # Key Vault access test, run inside the VMs
+│   └── test-kv-network.sh       # Network reachability test to the private endpoint
 ├── queries/
 │   └── kv-secret-reads.kql      # Audit query for secret reads
 └── docs/
@@ -259,9 +265,6 @@ terraform destroy
   one with the specific inbound and outbound rules Bastion requires (#9).
 - **The OS image uses `version = "latest"`.** Convenient for a lab; production pins an
   exact image version so deployments stay reproducible.
-- **`snet-pe` has no NSG.** Any subnet in the VNet can reach the private
-  endpoint. Fix requires an NSG and `private_endpoint_network_policies`
-  enabled on the subnet (#13).
 - **Writing a secret requires Bastion and an interactive session on `vm-mgmt`.**
   Accepted for the lab ([ADR-002](docs/adr/adr-002-keyvault-secret-write-access.md));
   production target is a VPN or a CI runner inside the VNet.
@@ -273,6 +276,7 @@ terraform destroy
 - [Network segmentation and administrative access](docs/evidence/segmentation-test.md)
 - [Key Vault access control (401 / 403 / 200) and audit logs](docs/evidence/keyvault-access-test.md)
 - [Key Vault private endpoint and private DNS (before / after VNet link)](docs/evidence/keyvault-private-endpoint-test.md)
+- [Private endpoint subnet NSG (allowed vs blocked subnets)](docs/evidence/pe-subnet-nsg-test.md)
 
 ## Incidents
 
@@ -282,9 +286,7 @@ Real failures encountered while building this, diagnosed and documented:
 
 ## Next steps
 
-- NSG on `snet-pe` restricting access to the private endpoint (#13).
 - NSG on `AzureBastionSubnet` with the rules Bastion requires (#9).
-- Resolve the perpetual diff (#14).
 - Remote state backend in Azure Storage.
 - Deploy from CI with OIDC federated credentials.
 - Alert rule on denied secret reads (403).
