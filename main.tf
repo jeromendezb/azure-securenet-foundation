@@ -27,11 +27,11 @@ resource "azurerm_subnet" "app" {
 }
 
 resource "azurerm_subnet" "pe" {
-  #checkov:skip=CKV2_AZURE_31:TEMPORARY. Fix tracked in #13 (NSG for private endpoint subnet).
-  name                 = "snet-pe"
-  resource_group_name  = azurerm_resource_group.main.name
-  virtual_network_name = azurerm_virtual_network.main.name
-  address_prefixes     = [var.snet_pe_prefix]
+  name                              = "snet-pe"
+  resource_group_name               = azurerm_resource_group.main.name
+  virtual_network_name              = azurerm_virtual_network.main.name
+  address_prefixes                  = [var.snet_pe_prefix]
+  private_endpoint_network_policies = "NetworkSecurityGroupEnabled"
 }
 
 resource "azurerm_network_security_group" "mgmt" {
@@ -80,6 +80,55 @@ resource "azurerm_network_security_group" "app" {
 resource "azurerm_subnet_network_security_group_association" "app" {
   subnet_id                 = azurerm_subnet.app.id
   network_security_group_id = azurerm_network_security_group.app.id
+}
+
+resource "azurerm_network_security_group" "pe" {
+  name                = "nsg-pe-${local.name_suffix}"
+  location            = azurerm_resource_group.main.location
+  resource_group_name = azurerm_resource_group.main.name
+  tags                = local.common_tags
+
+  security_rule {
+    name                       = "allow-https-from-mgmt"
+    priority                   = 110
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "443"
+    source_address_prefix      = var.snet_mgmt_prefix
+    destination_address_prefix = "*"
+  }
+
+
+  security_rule {
+    name                       = "allow-https-from-app"
+    priority                   = 100
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "443"
+    source_address_prefix      = var.snet_app_prefix
+    destination_address_prefix = "*"
+  }
+
+  security_rule {
+    name                       = "deny-all-from-vnet"
+    priority                   = 4000
+    direction                  = "Inbound"
+    access                     = "Deny"
+    protocol                   = "*"
+    source_port_range          = "*"
+    destination_port_range     = "*"
+    source_address_prefix      = "VirtualNetwork"
+    destination_address_prefix = "*"
+  }
+}
+
+resource "azurerm_subnet_network_security_group_association" "pe" {
+  subnet_id                 = azurerm_subnet.pe.id
+  network_security_group_id = azurerm_network_security_group.pe.id
 }
 
 resource "azurerm_subnet" "bastion" {
@@ -303,6 +352,10 @@ resource "azurerm_private_endpoint" "kv" {
     name                 = "pdzg-kv-${local.name_suffix}"
     private_dns_zone_ids = [azurerm_private_dns_zone.kv.id]
   }
+
+  # Explicit dependency: the NSG association updates snet-pe, and Azure rejects
+  # creating the endpoint while the subnet is in "Updating" state.
+  depends_on = [azurerm_subnet_network_security_group_association.pe]
 
   tags = local.common_tags
 }
