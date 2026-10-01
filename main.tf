@@ -320,6 +320,10 @@ resource "azurerm_linux_virtual_machine" "app" {
     sku       = "server"
     version   = "latest"
   }
+
+  # Serial log and screenshot for diagnosing boot failures without logging in (break-glass case D).
+  boot_diagnostics {}
+
 }
 
 resource "azurerm_network_interface" "mgmt" {
@@ -369,6 +373,10 @@ resource "azurerm_linux_virtual_machine" "mgmt" {
     sku       = "server"
     version   = "latest"
   }
+
+  # Serial log and screenshot for diagnosing boot failures without logging in (break-glass case D).
+  boot_diagnostics {}
+
 }
 
 data "azurerm_client_config" "current" {}
