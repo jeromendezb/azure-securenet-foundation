@@ -32,8 +32,13 @@ jobs:
 
       - name: Validate configuration
         run: terraform validate
-     
-     
+
+      - name: Initialize governance without backend
+        run: terraform -chdir=governance init -backend=false
+
+      - name: Validate governance configuration
+        run: terraform -chdir=governance validate
+
   security-scan:
     name: Checkov scan
     runs-on: ubuntu-latest
@@ -46,4 +51,4 @@ jobs:
         run: >-
           docker run --rm -v "${{ github.workspace }}:/tf"
           bridgecrew/checkov:3.2.20
-          -d /tf --compact --quiet     
+          -d /tf --compact --quiet

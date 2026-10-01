@@ -138,6 +138,26 @@ Inside the VNet, `nsg-pe` allows HTTPS to the private endpoint only from
 `snet-app` and `snet-mgmt`; traffic from any other subnet is dropped
 ([evidence](docs/evidence/pe-subnet-nsg-test.md)).
 
+## Governance
+
+The fix for the public Key Vault (SEC-014) only covered the vault this repository
+deploys. A guardrail prevents the same misconfiguration anywhere in the
+subscription:
+
+| Policy | Scope | Effect |
+|---|---|---|
+| Azure Key Vault should disable public network access (built-in) | Subscription | `Deny` |
+
+Any request to create or update a Key Vault with public network access is
+rejected with `RequestDisallowedByPolicy`, including requests from an `Owner`.
+RBAC decides *who* can act; Policy decides *what* the result is allowed to look like.
+
+The guardrail lives in [`governance/`](governance/), a separate Terraform root
+with its own state. Destroying the lab never removes it. The effect was rolled
+out as `Audit` first and switched to `Deny` once no non-compliant vaults remained
+([ADR-003](docs/adr/adr-003-subscription-guardrails.md),
+[evidence](docs/evidence/policy-kv-public-access-test.md)).
+
 ## Continuous integration
 
 Every pull request to `main` runs two jobs from [`terraform-ci.yml`](.github/workflows/terraform-ci.yml):
@@ -147,6 +167,7 @@ Every pull request to `main` runs two jobs from [`terraform-ci.yml`](.github/wor
 | Validate Terraform | `terraform fmt -check -recursive` | Non-standard formatting |
 | | `terraform init -backend=false` | Provider download issues, without touching state or Azure |
 | | `terraform validate` | Syntax errors, invalid arguments, undeclared references |
+| | `init` + `validate` in `governance/` | The same checks for the guardrail configuration |
 | Checkov scan | Checkov 3.2.20 (pinned) | Security misconfigurations in the Terraform code |
 
 Checkov findings were triaged: accepted risks carry a written justification
@@ -170,6 +191,7 @@ is planned using OIDC federated credentials.
 .
 ├── .github/workflows/
 │   └── terraform-ci.yml         # CI: fmt, validate and Checkov on every PR
+├── governance/                  # Subscription guardrails (Azure Policy), separate state
 ├── providers.tf                 # Provider and version pinning
 ├── variables.tf                 # Inputs and naming/tagging locals
 ├── main.tf                      # Network, NSGs, Bastion, VMs, Key Vault, logging
@@ -210,6 +232,13 @@ terraform validate
 terraform plan -out=tfplan
 terraform apply tfplan
 ```
+The guardrails are deployed once, separately, and are not destroyed with the lab:
+
+```powershell
+terraform -chdir=governance init
+terraform -chdir=governance apply
+```
+
 After `apply`, `terraform plan` must report `No changes`. Values that Azure
 sets on its own after creation are declared in the code instead of ignored
 with `ignore_changes`, so a manual change to them still shows up as drift.
@@ -275,6 +304,9 @@ terraform destroy
   Accepted for the lab ([ADR-002](docs/adr/adr-002-keyvault-secret-write-access.md));
   production target is a VPN or a CI runner inside the VNet.
 - **No alert on denied secret reads.** Logs are collected, but nobody is notified.
+- **One guardrail only.** Azure Policy covers Key Vault public network access;
+  other services that can be exposed (Storage, SQL) are not covered yet.
+- **Governance state is local**, like the workload state.
 - **Key Vault purge protection is disabled.** Lab only, so the vault can be redeployed.
 
 ## Evidence
@@ -284,6 +316,7 @@ terraform destroy
 - [Key Vault private endpoint and private DNS (before / after VNet link)](docs/evidence/keyvault-private-endpoint-test.md)
 - [Private endpoint subnet NSG (allowed vs blocked subnets)](docs/evidence/pe-subnet-nsg-test.md)
 - [Bastion subnet NSG (required rules, working SSH session)](docs/evidence/bastion-subnet-nsg-test.md)
+- [Azure Policy: Key Vault public access denied at subscription scope](docs/evidence/policy-kv-public-access-test.md)
 
 ## Incidents
 
@@ -293,8 +326,6 @@ Real failures encountered while building this, diagnosed and documented:
 
 ## Next steps
 
-- Azure Policy that denies Key Vaults with public network access, so the SEC-014
-  fix cannot regress.
 - Remote state backend in Azure Storage.
 - Deploy from CI with OIDC federated credentials.
 - Alert rule on denied secret reads (403).
