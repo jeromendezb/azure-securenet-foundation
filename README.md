@@ -98,6 +98,14 @@ so the rules are copied from the documentation, not designed
 public key is read from the local filesystem at plan time, so no key material is
 stored in this repository.
 
+**Tested emergency access.** If Bastion is unavailable, the SSH key is lost or
+SSH stops answering inside the VM, access is recovered without opening any port:
+`az vm run-command` and the VMAccess extension work through the Azure VM agent,
+and boot diagnostics show the boot log without logging in. Serial Console is
+intentionally not used: it would need a local password on the VMs. The procedure
+is a [runbook](docs/runbooks/break-glass-vm-access.md), and every case except the
+last-resort repair VM was tested ([evidence](docs/evidence/break-glass-test.md)).
+
 **Everything tagged.** All resources carry `project`, `environment`, `owner` and
 `managed_by = terraform`, enabling cost allocation per project and signalling that
 resources must not be modified manually.
@@ -197,13 +205,15 @@ is planned using OIDC federated credentials.
 ├── main.tf                      # Network, NSGs, Bastion, VMs, Key Vault, logging
 ├── scripts/
 │   ├── test-kv-access.sh        # Key Vault access test, run inside the VMs
-│   └── test-kv-network.sh       # Network reachability test to the private endpoint
+│   ├── test-kv-network.sh       # Network reachability test to the private endpoint
+│   └── check-ssh-port.sh        # SSH reachability check used by the break-glass runbook
 ├── queries/
 │   └── kv-secret-reads.kql      # Audit query for secret reads
 └── docs/
     ├── adr/                     # Architecture decision records
     ├── evidence/                # Test results backing each security claim
-    └── incidents/               # Incident reports from real failures
+    ├── incidents/               # Incident reports from real failures
+    └── runbooks/                # Operational procedures (break-glass access)
 ```
 
 ## Prerequisites
@@ -307,6 +317,12 @@ terraform destroy
 - **One guardrail only.** Azure Policy covers Key Vault public network access;
   other services that can be exposed (Storage, SQL) are not covered yet.
 - **Governance state is local**, like the workload state.
+- **Repair VM recovery is documented but untested.** If the VM agent is down,
+  `run-command` and VMAccess cannot help; the runbook's last resort
+  (`az vm repair`) has not been exercised in this lab.
+- **`run-command` is root access.** Any role with
+  `Microsoft.Compute/virtualMachines/runCommand/action`, including
+  Virtual Machine Contributor, can run commands as root. No alert exists yet.
 - **Key Vault purge protection is disabled.** Lab only, so the vault can be redeployed.
 
 ## Evidence
@@ -317,6 +333,7 @@ terraform destroy
 - [Private endpoint subnet NSG (allowed vs blocked subnets)](docs/evidence/pe-subnet-nsg-test.md)
 - [Bastion subnet NSG (required rules, working SSH session)](docs/evidence/bastion-subnet-nsg-test.md)
 - [Azure Policy: Key Vault public access denied at subscription scope](docs/evidence/policy-kv-public-access-test.md)
+- [Break-glass access: recovery without SSH or Bastion](docs/evidence/break-glass-test.md)
 
 ## Incidents
 
@@ -329,3 +346,4 @@ Real failures encountered while building this, diagnosed and documented:
 - Remote state backend in Azure Storage.
 - Deploy from CI with OIDC federated credentials.
 - Alert rule on denied secret reads (403).
+- Alert on `runCommand` operations in the Activity Log.
