@@ -26,7 +26,7 @@ graph TB
         ADM[Administrator]
     end
     subgraph VNet["VNet 10.0.0.0/16"]
-        subgraph BAS["AzureBastionSubnet 10.0.3.0/26"]
+        subgraph BAS["AzureBastionSubnet 10.0.3.0/26 — nsg-bastion"]
             B[Azure Bastion + Public IP — optional]
         end
         subgraph APP["snet-app 10.0.1.0/24 — nsg-app"]
@@ -59,6 +59,7 @@ graph TB
 | NSG | `nsg-app-securenet-dev-eus-001` | Blocks management ports from the Internet |
 | NSG | `nsg-mgmt-securenet-dev-eus-001` | Blocks all traffic coming from `snet-app` |
 | NSG | `nsg-pe-securenet-dev-eus-001` | Allows HTTPS to the private endpoint only from `snet-app` and `snet-mgmt` |
+| NSG | `nsg-bastion-securenet-dev-eus-001` | The inbound and outbound rules Azure Bastion requires, and nothing else |
 | Bastion + Public IP | `bas-securenet-dev-eus-001` | Optional (`enable_bastion`, off by default). Administrative access without public IPs on VMs |
 | VM | `vm-app-securenet-dev-eus-001` | Ubuntu 24.04 LTS, SSH key authentication only |
 | VM | `vm-mgmt-securenet-dev-eus-001` | Management tier. Identity with no vault role (negative control) |
@@ -85,6 +86,13 @@ tier is compromised, the attacker cannot pivot into the management tier.
 it, but this rule means a later "temporary" allow rule cannot silently expose
 management ports: it would have to be placed above an explicitly named deny rule,
 which is visible in code review and in the Git history.
+
+**Every subnet has an NSG.** `AzureBastionSubnet` carries the exact rule set
+Microsoft documents for Bastion: HTTPS from the Internet for operators,
+`GatewayManager` and `AzureLoadBalancer` for the control plane and health probes,
+and outbound SSH/RDP only towards the VNet. Missing any of them breaks Bastion,
+so the rules are copied from the documentation, not designed
+([evidence](docs/evidence/bastion-subnet-nsg-test.md)).
 
 **Key-based authentication only.** `disable_password_authentication = true`. The
 public key is read from the local filesystem at plan time, so no key material is
@@ -223,10 +231,10 @@ restricted by a condition to the specific roles this configuration assigns.
 ## Verification
 
 ```bash
-# NSGs exist and are attached to their subnets
-az network vnet subnet show -g rg-securenet-dev-eus-001 \
-  --vnet-name vnet-securenet-dev-eus-001 -n snet-mgmt \
-  --query networkSecurityGroup.id -o tsv
+# Every subnet has an NSG attached (no row should show an empty NSG column)
+az network vnet subnet list -g rg-securenet-dev-eus-001 \
+  --vnet-name vnet-securenet-dev-eus-001 \
+  --query "[].{subnet:name, nsg:networkSecurityGroup.id}" -o table
 
 # The VM has no public IP
 az vm list-ip-addresses -g rg-securenet-dev-eus-001 \
@@ -261,8 +269,6 @@ terraform destroy
 - **Remote state is not configured.** State is local, which is acceptable for a
   single operator. A shared Azure Storage backend is required before this runs in a
   pipeline or with more than one engineer.
-- **`AzureBastionSubnet` has no NSG.** Valid and common, but production would attach
-  one with the specific inbound and outbound rules Bastion requires (#9).
 - **The OS image uses `version = "latest"`.** Convenient for a lab; production pins an
   exact image version so deployments stay reproducible.
 - **Writing a secret requires Bastion and an interactive session on `vm-mgmt`.**
@@ -277,6 +283,7 @@ terraform destroy
 - [Key Vault access control (401 / 403 / 200) and audit logs](docs/evidence/keyvault-access-test.md)
 - [Key Vault private endpoint and private DNS (before / after VNet link)](docs/evidence/keyvault-private-endpoint-test.md)
 - [Private endpoint subnet NSG (allowed vs blocked subnets)](docs/evidence/pe-subnet-nsg-test.md)
+- [Bastion subnet NSG (required rules, working SSH session)](docs/evidence/bastion-subnet-nsg-test.md)
 
 ## Incidents
 
@@ -286,7 +293,8 @@ Real failures encountered while building this, diagnosed and documented:
 
 ## Next steps
 
-- NSG on `AzureBastionSubnet` with the rules Bastion requires (#9).
+- Azure Policy that denies Key Vaults with public network access, so the SEC-014
+  fix cannot regress.
 - Remote state backend in Azure Storage.
 - Deploy from CI with OIDC federated credentials.
 - Alert rule on denied secret reads (403).
