@@ -132,11 +132,118 @@ resource "azurerm_subnet_network_security_group_association" "pe" {
 }
 
 resource "azurerm_subnet" "bastion" {
-  #checkov:skip=CKV2_AZURE_31:TEMPORARY. Fix tracked in #9 (Bastion subnet NSG).
   name                 = "AzureBastionSubnet"
   resource_group_name  = azurerm_resource_group.main.name
   virtual_network_name = azurerm_virtual_network.main.name
   address_prefixes     = [var.snet_bastion_prefix]
+}
+
+resource "azurerm_network_security_group" "bastion" {
+  name                = "nsg-bastion-${local.name_suffix}"
+  location            = azurerm_resource_group.main.location
+  resource_group_name = azurerm_resource_group.main.name
+  tags                = local.common_tags
+
+  security_rule {
+    name                       = "AllowHttpsInbound"
+    priority                   = 120
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "443"
+    source_address_prefix      = "Internet"
+    destination_address_prefix = "*"
+  }
+
+  security_rule {
+    name                       = "AllowGatewayManagerInbound"
+    priority                   = 130
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "443"
+    source_address_prefix      = "GatewayManager"
+    destination_address_prefix = "*"
+  }
+
+  security_rule {
+    name                       = "AllowAzureLoadBalancerInbound"
+    priority                   = 140
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "443"
+    source_address_prefix      = "AzureLoadBalancer"
+    destination_address_prefix = "*"
+  }
+
+  security_rule {
+    name                       = "AllowBastionHostCommunication"
+    priority                   = 150
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "*"
+    source_port_range          = "*"
+    destination_port_ranges    = ["8080", "5701"]
+    source_address_prefix      = "VirtualNetwork"
+    destination_address_prefix = "VirtualNetwork"
+  }
+
+  security_rule {
+    name                       = "AllowSshRdpOutbound"
+    priority                   = 100
+    direction                  = "Outbound"
+    access                     = "Allow"
+    protocol                   = "*"
+    source_port_range          = "*"
+    destination_port_ranges    = ["22", "3389"]
+    source_address_prefix      = "*"
+    destination_address_prefix = "VirtualNetwork"
+  }
+
+  security_rule {
+    name                       = "AllowAzureCloudOutbound"
+    priority                   = 110
+    direction                  = "Outbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "443"
+    source_address_prefix      = "*"
+    destination_address_prefix = "AzureCloud"
+  }
+
+  security_rule {
+    name                       = "AllowBastionCommunication"
+    priority                   = 120
+    direction                  = "Outbound"
+    access                     = "Allow"
+    protocol                   = "*"
+    source_port_range          = "*"
+    destination_port_ranges    = ["8080", "5701"]
+    source_address_prefix      = "VirtualNetwork"
+    destination_address_prefix = "VirtualNetwork"
+  }
+
+  security_rule {
+    name                       = "AllowHttpOutbound"
+    priority                   = 130
+    direction                  = "Outbound"
+    access                     = "Allow"
+    protocol                   = "*"
+    source_port_range          = "*"
+    destination_port_range     = "80"
+    source_address_prefix      = "*"
+    destination_address_prefix = "Internet"
+  }
+}
+
+resource "azurerm_subnet_network_security_group_association" "bastion" {
+  subnet_id                 = azurerm_subnet.bastion.id
+  network_security_group_id = azurerm_network_security_group.bastion.id
 }
 
 resource "azurerm_public_ip" "bastion" {
@@ -157,7 +264,9 @@ resource "azurerm_bastion_host" "main" {
   resource_group_name = azurerm_resource_group.main.name
   sku                 = "Basic"
   tags                = local.common_tags
-
+  # Explicit dependency: the NSG association updates AzureBastionSubnet, and Azure
+  # rejects deploying Bastion into the subnet while it is in "Updating" state.
+  depends_on = [azurerm_subnet_network_security_group_association.bastion]
   ip_configuration {
     name                 = "configuration"
     subnet_id            = azurerm_subnet.bastion.id
@@ -179,16 +288,16 @@ resource "azurerm_network_interface" "app" {
 }
 
 resource "azurerm_linux_virtual_machine" "app" {
-  # Azure enables this after creation; declared so plans stay clean and manual changes are still detected.
   #checkov:skip=CKV_AZURE_50:Extensions are required by the Azure Monitor agent and by az vm run-command, used for testing. Who can install extensions is limited by RBAC.
-  name                              = "vm-app-${local.name_suffix}"
-  location                          = azurerm_resource_group.main.location
-  resource_group_name               = azurerm_resource_group.main.name
-  size                              = var.vm_size
-  admin_username                    = var.admin_username
-  network_interface_ids             = [azurerm_network_interface.app.id]
-  disable_password_authentication   = true
-  tags                              = local.common_tags
+  name                            = "vm-app-${local.name_suffix}"
+  location                        = azurerm_resource_group.main.location
+  resource_group_name             = azurerm_resource_group.main.name
+  size                            = var.vm_size
+  admin_username                  = var.admin_username
+  network_interface_ids           = [azurerm_network_interface.app.id]
+  disable_password_authentication = true
+  tags                            = local.common_tags
+  # Azure enables this after creation; declared so plans stay clean and manual changes are still detected.
   vm_agent_platform_updates_enabled = true
 
   identity {
@@ -227,17 +336,18 @@ resource "azurerm_network_interface" "mgmt" {
 }
 
 resource "azurerm_linux_virtual_machine" "mgmt" {
-  # Azure enables this after creation; declared so plans stay clean and manual changes are still detected.
   #checkov:skip=CKV_AZURE_50:Extensions are required by the Azure Monitor agent and by az vm run-command, used for testing. Who can install extensions is limited by RBAC.
-  name                              = "vm-mgmt-${local.name_suffix}"
-  location                          = azurerm_resource_group.main.location
-  resource_group_name               = azurerm_resource_group.main.name
-  size                              = var.vm_size
-  admin_username                    = var.admin_username
-  network_interface_ids             = [azurerm_network_interface.mgmt.id]
-  disable_password_authentication   = true
-  tags                              = local.common_tags
+  name                            = "vm-mgmt-${local.name_suffix}"
+  location                        = azurerm_resource_group.main.location
+  resource_group_name             = azurerm_resource_group.main.name
+  size                            = var.vm_size
+  admin_username                  = var.admin_username
+  network_interface_ids           = [azurerm_network_interface.mgmt.id]
+  disable_password_authentication = true
+  tags                            = local.common_tags
+  # Azure enables this after creation; declared so plans stay clean and manual changes are still detected.
   vm_agent_platform_updates_enabled = true
+
   # Identity with no Key Vault role: used to verify that RBAC denies access
   identity {
     type = "SystemAssigned"
