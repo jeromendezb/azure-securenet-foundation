@@ -417,20 +417,17 @@ resource "azurerm_role_assignment" "operator_kv_secrets_officer" {
   principal_id         = data.azurerm_client_config.current.object_id
 }
 
-resource "azurerm_log_analytics_workspace" "main" {
-  name                = "log-${local.name_suffix}"
-  location            = azurerm_resource_group.main.location
-  resource_group_name = azurerm_resource_group.main.name
-  sku                 = "PerGB2018"
-  retention_in_days   = 30
-
-  tags = local.common_tags
+# The workspace is owned by governance/ (ADR-004) so it survives a destroy of
+# this root. It is looked up here, not created: apply governance/ first.
+data "azurerm_log_analytics_workspace" "monitoring" {
+  name                = var.monitoring_workspace_name
+  resource_group_name = var.monitoring_workspace_rg
 }
 
 resource "azurerm_monitor_diagnostic_setting" "kv" {
   name                       = "diag-${local.name_suffix}"
   target_resource_id         = azurerm_key_vault.main.id
-  log_analytics_workspace_id = azurerm_log_analytics_workspace.main.id
+  log_analytics_workspace_id = data.azurerm_log_analytics_workspace.monitoring.id
 
   enabled_log {
     category = "AuditEvent"
