@@ -8,3 +8,9 @@ variable "kv_public_access_effect" {
     error_message = "The effect must be Audit, Deny or Disabled."
   }
 }
+
+variable "location" {
+  description = "Azure region for the monitoring resources."
+  type        = string
+  default     = "eastus"
+}
