@@ -233,6 +233,7 @@ is planned using OIDC federated credentials.
 ├── variables.tf                 # Inputs and naming/tagging locals
 ├── main.tf                      # Network, NSGs, Bastion, VMs, Key Vault, Key Vault diagnostic setting
 ├── scripts/
+│   ├── bootstrap-state.ps1      # Creates the storage account for the Terraform state (run once)
 │   ├── test-kv-access.sh        # Key Vault access test, run inside the VMs
 │   ├── test-kv-network.sh       # Network reachability test to the private endpoint
 │   └── check-ssh-port.sh        # SSH reachability check used by the break-glass runbook
@@ -265,6 +266,28 @@ set, the azurerm provider falls back to Azure CLI credentials.
 Deploy in this order. The workload looks up the monitoring workspace with a
 `data` source, so `governance/` must exist first; otherwise `plan` fails
 with "not found".
+
+**0. State storage** (once, before the first `terraform init`):
+
+```powershell
+.\scripts\bootstrap-state.ps1
+```
+
+Both roots keep their state in Azure Storage, not on the workstation
+([ADR-005](docs/adr/adr-005-remote-state.md)). The backend reads its
+configuration before Terraform can create anything, so the storage account
+is created by this script instead of by Terraform. The script is safe to run
+again.
+
+| Root | State file in container `tfstate` |
+|---|---|
+| Workload (repository root) | `workload.tfstate` |
+| `governance/` | `governance.tfstate` |
+
+The storage account accepts Entra ID only (shared keys disabled), keeps
+previous versions of each state file, and recovers deleted files for 7 days.
+The backend locks the state during every run, so two runs cannot overwrite
+each other.
 
 **1. Governance and monitoring** (once; not destroyed with the lab):
 
@@ -332,6 +355,7 @@ the association is verified explicitly, not assumed.
 | Private DNS zone | Small fixed monthly fee per zone |
 | Log Analytics (`governance/`, always on) | Per GB ingested; no cost without data; capped at 1 GB/day |
 | Microsoft Sentinel | 31-day free trial (10 GB/day); then per GB analyzed. `AzureActivity` is free |
+| State storage account (always on) | Cents per month for a few kilobytes of state |
 
 Bastion bills per hour whether or not it is used. The lab is designed to be deployed,
 verified, and destroyed in the same session:
@@ -345,9 +369,11 @@ layer and the policy in `governance/` stay, on purpose.
 
 ## Known limitations
 
-- **Remote state is not configured.** State is local, which is acceptable for a
-  single operator. A shared Azure Storage backend is required before this runs in a
-  pipeline or with more than one engineer.
+- **The state storage account is reachable from the Internet.** It is protected
+  by identity (Entra ID only, role scoped to the account), not by network,
+  because Terraform runs from the workstation and from CI. A private endpoint
+  with a runner inside the VNet is the production target
+  ([ADR-005](docs/adr/adr-005-remote-state.md)).
 - **The OS image uses `version = "latest"`.** Convenient for a lab; production pins an
   exact image version so deployments stay reproducible.
 - **Writing a secret requires Bastion and an interactive session on `vm-mgmt`.**
@@ -363,7 +389,6 @@ layer and the policy in `governance/` stay, on purpose.
   the tests, from log ingestion plus the rule schedule.
 - **One guardrail only.** Azure Policy covers Key Vault public network access;
   other services that can be exposed (Storage, SQL) are not covered yet.
-- **Governance state is local**, like the workload state.
 - **Repair VM recovery is documented but untested.** If the VM agent is down,
   `run-command` and VMAccess cannot help; the runbook's last resort
   (`az vm repair`) has not been exercised in this lab.
@@ -383,6 +408,7 @@ layer and the policy in `governance/` stay, on purpose.
 - [Azure Policy: Key Vault public access denied at subscription scope](docs/evidence/policy-kv-public-access-test.md)
 - [Break-glass access: recovery without SSH or Bastion](docs/evidence/break-glass-test.md)
 - [Sentinel detection: run-command and repeated Key Vault denials](docs/evidence/sentinel-detection-test.md)
+- [Terraform state migrated to Azure Storage without recreating resources](docs/evidence/remote-state-migration.md)
 
 ## Incidents
 
@@ -392,7 +418,6 @@ Real failures encountered while building this, diagnosed and documented:
 
 ## Next steps
 
-- Remote state backend in Azure Storage.
 - Deploy from CI with OIDC federated credentials.
 - Entity mapping on the Sentinel rules (SEC-017).
 - Notify on new incidents with a Sentinel automation rule.
