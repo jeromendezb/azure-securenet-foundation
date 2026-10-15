@@ -32,3 +32,31 @@ resource "azurerm_sentinel_alert_rule_scheduled" "vm_run_command" {
   trigger_operator  = "GreaterThan"
   trigger_threshold = 0
 }
+
+# Detects repeated Key Vault access denials from the same identity (ADR-004).
+# A single 403 is usually a misconfiguration (for example, a missing DNS link),
+# so the rule only fires when one identity is denied 5 or more times in
+# 10 minutes, which points to probing with a stolen identity.
+resource "azurerm_sentinel_alert_rule_scheduled" "kv_repeated_denials" {
+  name                       = "alert-kv-repeated-denials"
+  log_analytics_workspace_id = azurerm_sentinel_log_analytics_workspace_onboarding.main.workspace_id
+  display_name               = "Repeated Key Vault access denials (SEC-016)"
+  description                = "One identity was denied access to a Key Vault 5 or more times in 10 minutes. Check whether a recent change broke its network path or its role. If neither explains it, treat it as probing with a compromised identity."
+  enabled                    = true
+  severity                   = "Medium"
+  tactics                    = ["CredentialAccess"]
+
+  query = <<-QUERY
+    AzureDiagnostics
+    | where ResourceProvider == "MICROSOFT.KEYVAULT" and Category == "AuditEvent"
+    | where httpStatusCode_d == 403
+    | extend Identity = coalesce(column_ifexists("identity_claim_upn_s", ""), tostring(identity_claim_oid_g), CallerIPAddress)
+    | summarize Denials = count(), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated), CallerIPs = make_set(CallerIPAddress) by Identity, Resource
+    | where Denials >= 5
+  QUERY
+
+  query_frequency   = "PT10M"
+  query_period      = "PT10M"
+  trigger_operator  = "GreaterThan"
+  trigger_threshold = 0
+}
