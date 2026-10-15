@@ -67,7 +67,7 @@ graph TB
 | Private endpoint | `pe-kv-securenet-dev-eus-001` | Private IP for the Key Vault inside `snet-pe` |
 | Private DNS zone | `privatelink.vaultcore.azure.net` | Resolves the vault name to its private IP inside the VNet |
 | DNS zone VNet link | `pdzvlink-kv-securenet-dev-eus-001` | Makes the VNet use the private DNS zone |
-| Log Analytics | `log-securenet-dev-eus-001` | Receives Key Vault audit logs (`AuditEvent`) |
+| Key Vault diagnostic setting | `diag-securenet-dev-eus-001` | Sends Key Vault audit logs (`AuditEvent`) to the monitoring workspace in `governance/` |
 
 ## Security controls
 
@@ -130,8 +130,9 @@ reaches the state file.
 **Verified** ([evidence](docs/evidence/keyvault-access-test.md)): no token →
 401, identity without role → 403 `ForbiddenByRbac`, application identity → 200.
 
-**Audit logging:** every secret read is logged to Log Analytics
-(`AuditEvent`). Query: [`kv-secret-reads.kql`](queries/kv-secret-reads.kql).
+**Audit logging:** every secret read is logged to the Log Analytics workspace
+of the monitoring layer (`AuditEvent`), including requests rejected at the
+network layer. Query: [`kv-secret-reads.kql`](queries/kv-secret-reads.kql).
 
 **Network isolation:** the vault only accepts traffic through its private
 endpoint (`public_network_access_enabled = false`, network ACL default
@@ -166,6 +167,34 @@ out as `Audit` first and switched to `Deny` once no non-compliant vaults remaine
 ([ADR-003](docs/adr/adr-003-subscription-guardrails.md),
 [evidence](docs/evidence/policy-kv-public-access-test.md)).
 
+## Detection
+
+Prevention alone does not show who is trying to get around it. A persistent
+monitoring layer in [`governance/`](governance/) collects the logs and raises
+incidents in Microsoft Sentinel
+([ADR-004](docs/adr/adr-004-detection-with-sentinel.md)).
+
+| Resource | Name | Purpose |
+|---|---|---|
+| Resource group | `rg-securenet-monitoring-dev-eus-001` | Monitoring layer, separate from the workload |
+| Log Analytics | `log-securenet-dev-eus-001` | 90-day retention, shared-key access disabled (Entra ID only), 1 GB/day cap (lab) |
+| Diagnostic setting | `diag-activity-log-to-law` | Subscription Activity Log, all categories, to the workspace |
+| Microsoft Sentinel | on `log-securenet-dev-eus-001` | Runs the analytics rules below and manages incidents |
+
+| Rule | Logic | Severity | Triage question |
+|---|---|---|---|
+| Run Command executed | Every `RUNCOMMAND/ACTION` ending in `Success` or `Failure` | High | Is there an open ticket (test or break-glass) that explains it? |
+| Repeated Key Vault access denials | 5 or more `403` from the same identity in 10 minutes | Medium | Is the identity known, and did a recent change break its network path or role? |
+
+The workspace lives outside the workload root so that `terraform destroy`
+never deletes the logs that explain what happened. A single `403` does not
+alert: one misconfiguration produces one on every retry, as the missing DNS
+link did during the private endpoint test.
+
+Both rules were tested end to end with real events: each produced an
+incident in Sentinel, which was triaged and closed with a reference to the
+ticket ([evidence](docs/evidence/sentinel-detection-test.md)).
+
 ## Continuous integration
 
 Every pull request to `main` runs two jobs from [`terraform-ci.yml`](.github/workflows/terraform-ci.yml):
@@ -199,10 +228,10 @@ is planned using OIDC federated credentials.
 .
 ├── .github/workflows/
 │   └── terraform-ci.yml         # CI: fmt, validate and Checkov on every PR
-├── governance/                  # Subscription guardrails (Azure Policy), separate state
+├── governance/                  # Long-lived layer: Azure Policy, Log Analytics, Sentinel. Separate state
 ├── providers.tf                 # Provider and version pinning
 ├── variables.tf                 # Inputs and naming/tagging locals
-├── main.tf                      # Network, NSGs, Bastion, VMs, Key Vault, logging
+├── main.tf                      # Network, NSGs, Bastion, VMs, Key Vault, Key Vault diagnostic setting
 ├── scripts/
 │   ├── test-kv-access.sh        # Key Vault access test, run inside the VMs
 │   ├── test-kv-network.sh       # Network reachability test to the private endpoint
@@ -233,20 +262,27 @@ ssh-keygen -t rsa -b 4096 -f ~/.ssh/securenet_lab
 the operator's Azure CLI session. When no `ARM_*` environment variables are
 set, the azurerm provider falls back to Azure CLI credentials.
 
+Deploy in this order. The workload looks up the monitoring workspace with a
+`data` source, so `governance/` must exist first; otherwise `plan` fails
+with "not found".
+
+**1. Governance and monitoring** (once; not destroyed with the lab):
+
 ```powershell
 az login
 az account show   # confirm which identity will run Terraform
+terraform -chdir=governance init
+terraform -chdir=governance apply
+```
+
+**2. Workload** (each lab session):
+
+```powershell
 terraform init
 terraform fmt -check
 terraform validate
 terraform plan -out=tfplan
 terraform apply tfplan
-```
-The guardrails are deployed once, separately, and are not destroyed with the lab:
-
-```powershell
-terraform -chdir=governance init
-terraform -chdir=governance apply
 ```
 
 After `apply`, `terraform plan` must report `No changes`. Values that Azure
@@ -294,7 +330,8 @@ the association is verified explicitly, not assumed.
 | Key Vault (Standard) | Per operation; negligible at lab volume |
 | Private endpoint | ~$0.01 / hour, plus data processed |
 | Private DNS zone | Small fixed monthly fee per zone |
-| Log Analytics | Per GB ingested; negligible at lab volume |
+| Log Analytics (`governance/`, always on) | Per GB ingested; no cost without data; capped at 1 GB/day |
+| Microsoft Sentinel | 31-day free trial (10 GB/day); then per GB analyzed. `AzureActivity` is free |
 
 Bastion bills per hour whether or not it is used. The lab is designed to be deployed,
 verified, and destroyed in the same session:
@@ -302,6 +339,9 @@ verified, and destroyed in the same session:
 ```bash
 terraform destroy
 ```
+
+`terraform destroy` in the root removes only the workload. The monitoring
+layer and the policy in `governance/` stay, on purpose.
 
 ## Known limitations
 
@@ -313,7 +353,14 @@ terraform destroy
 - **Writing a secret requires Bastion and an interactive session on `vm-mgmt`.**
   Accepted for the lab ([ADR-002](docs/adr/adr-002-keyvault-secret-write-access.md));
   production target is a VPN or a CI runner inside the VNet.
-- **No alert on denied secret reads.** Logs are collected, but nobody is notified.
+- **Incidents carry no entities.** The rules do not map columns to accounts, IPs
+  or resources yet, so the analyst reads them from the raw events. Tracked as SEC-017.
+- **The 403 threshold is not baselined.** Five denials in ten minutes is a
+  conservative starting value, not measured against normal traffic.
+- **No notification.** Incidents are created in Sentinel, but no automation
+  sends them anywhere; someone has to look.
+- **Detection delay of 7 to 10 minutes** between the event and the incident in
+  the tests, from log ingestion plus the rule schedule.
 - **One guardrail only.** Azure Policy covers Key Vault public network access;
   other services that can be exposed (Storage, SQL) are not covered yet.
 - **Governance state is local**, like the workload state.
@@ -322,7 +369,8 @@ terraform destroy
   (`az vm repair`) has not been exercised in this lab.
 - **`run-command` is root access.** Any role with
   `Microsoft.Compute/virtualMachines/runCommand/action`, including
-  Virtual Machine Contributor, can run commands as root. No alert exists yet.
+  Virtual Machine Contributor, can run commands as root. It is detected
+  (every execution raises a High incident), not prevented.
 - **Key Vault purge protection is disabled.** Lab only, so the vault can be redeployed.
 
 ## Evidence
@@ -334,6 +382,7 @@ terraform destroy
 - [Bastion subnet NSG (required rules, working SSH session)](docs/evidence/bastion-subnet-nsg-test.md)
 - [Azure Policy: Key Vault public access denied at subscription scope](docs/evidence/policy-kv-public-access-test.md)
 - [Break-glass access: recovery without SSH or Bastion](docs/evidence/break-glass-test.md)
+- [Sentinel detection: run-command and repeated Key Vault denials](docs/evidence/sentinel-detection-test.md)
 
 ## Incidents
 
@@ -345,5 +394,7 @@ Real failures encountered while building this, diagnosed and documented:
 
 - Remote state backend in Azure Storage.
 - Deploy from CI with OIDC federated credentials.
-- Alert rule on denied secret reads (403).
-- Alert on `runCommand` operations in the Activity Log.
+- Entity mapping on the Sentinel rules (SEC-017).
+- Notify on new incidents with a Sentinel automation rule.
+- Detect deletion of policy assignments, the way an `Owner` would bypass the guardrail.
+- Microsoft Defender for Cloud (free tier) for posture recommendations.
