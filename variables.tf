@@ -86,3 +86,15 @@ variable "snet_pe_prefix" {
   type        = string
   default     = "10.0.4.0/26"
 }
+
+variable "monitoring_workspace_name" {
+  description = "Nombre del Log Analytics Workspace de monitoreo"
+  type        = string
+  default     = "log-securenet-dev-eus-001"
+}
+
+variable "monitoring_workspace_rg" {
+  description = "Nombre del Resource Group del Log Analytics Workspace de monitoreo"
+  type        = string
+  default     = "rg-securenet-monitoring-dev-eus-001"
+}
