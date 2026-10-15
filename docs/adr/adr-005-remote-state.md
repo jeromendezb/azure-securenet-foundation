@@ -8,7 +8,7 @@
 
 ## Context
 
-Security finding SEC-018 reports that both Terraform roots (the workload and
+Security finding SEC-018 (issue #25) reports that both Terraform roots (the workload and
 `governance/`) keep their state in local files on the operator's workstation.
 
 The state is Terraform's record of which real resource matches each block of
