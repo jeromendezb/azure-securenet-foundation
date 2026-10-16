@@ -197,7 +197,7 @@ ticket ([evidence](docs/evidence/sentinel-detection-test.md)).
 
 ## Continuous integration
 
-Every pull request to `main` runs two jobs from [`terraform-ci.yml`](.github/workflows/terraform-ci.yml):
+Every pull request to `main` runs three jobs from [`terraform-ci.yml`](.github/workflows/terraform-ci.yml):
 
 | Job | Step | What it catches |
 |---|---|---|
@@ -206,6 +206,7 @@ Every pull request to `main` runs two jobs from [`terraform-ci.yml`](.github/wor
 | | `terraform validate` | Syntax errors, invalid arguments, undeclared references |
 | | `init` + `validate` in `governance/` | The same checks for the guardrail configuration |
 | Checkov scan | Checkov 3.2.20 (pinned) | Security misconfigurations in the Terraform code |
+| Terraform plan | `plan` for `governance/` and the workload, against Azure | What the pull request would create, change or destroy, before merge |
 
 Checkov findings were triaged: accepted risks carry a written justification
 in the code (`#checkov:skip`), and pending fixes are marked `TEMPORARY` with
@@ -219,8 +220,22 @@ Negative tests:
 - PR #3: a broken resource reference made **Validate Terraform** fail; merge blocked.
 - A test PR that added a rule opening SSH to the Internet made **Checkov scan** fail; merge blocked.
 
-No Azure credentials are stored in GitHub. Running `terraform plan` in CI
-is planned using OIDC federated credentials.
+**No Azure secret is stored in GitHub.** The plan job signs in with OIDC as a
+user-assigned managed identity defined in `governance/`
+([ADR-006](docs/adr/adr-006-ci-plan-with-oidc.md)):
+
+- The federated credential trusts only pull requests of this repository,
+  identified by GitHub's immutable owner and repository IDs.
+- The identity has `Reader` on the subscription and `Storage Blob Data
+  Contributor` on the state storage account only. It can read and lock the
+  state, but cannot change any resource.
+- The repository is public, so the job prints only the list of resource
+  actions and the summary line, never attribute values or resource IDs.
+- Client, tenant and subscription IDs are stored as GitHub secrets so they are
+  masked in the logs. None of them is a credential.
+
+The job runs only on pull requests and never applies; the operator applies
+after merge ([evidence](docs/evidence/ci-plan-oidc-test.md)).
 
 ## Repository layout
 
@@ -228,7 +243,7 @@ is planned using OIDC federated credentials.
 .
 ├── .github/workflows/
 │   └── terraform-ci.yml         # CI: fmt, validate and Checkov on every PR
-├── governance/                  # Long-lived layer: Azure Policy, Log Analytics, Sentinel. Separate state
+├── governance/                  # Long-lived layer: Azure Policy, Log Analytics, Sentinel, CI identity. Separate state
 ├── providers.tf                 # Provider and version pinning
 ├── variables.tf                 # Inputs and naming/tagging locals
 ├── main.tf                      # Network, NSGs, Bastion, VMs, Key Vault, Key Vault diagnostic setting
@@ -322,9 +337,13 @@ so `apply` would fail with `403 AuthorizationFailed`. Granting it `Owner`
 would let an automation credential give any role to anyone, so that option
 was rejected.
 
-**Target state:** deployments move to the CI pipeline using an OIDC federated
-identity (no stored secret), with `Role Based Access Control Administrator`
-restricted by a condition to the specific roles this configuration assigns.
+**CI:** every pull request runs `terraform plan` from GitHub Actions with an
+OIDC identity that can only read (see [Continuous integration](#continuous-integration)).
+
+**Target state:** `apply` also moves to the pipeline, after merge and with a
+required approval, using a separate write identity with `Role Based Access
+Control Administrator` restricted by a condition to the specific roles this
+configuration assigns.
 
 ## Verification
 
@@ -397,6 +416,10 @@ layer and the policy in `governance/` stay, on purpose.
   Virtual Machine Contributor, can run commands as root. It is detected
   (every execution raises a High incident), not prevented.
 - **Key Vault purge protection is disabled.** Lab only, so the vault can be redeployed.
+- **The CI identity can read the whole subscription.** `Reader` is needed to
+  plan; a workflow change in a pull request could print configuration to the
+  public log. Only collaborators can push branches, and forks cannot obtain
+  a token.
 
 ## Evidence
 
@@ -409,6 +432,7 @@ layer and the policy in `governance/` stay, on purpose.
 - [Break-glass access: recovery without SSH or Bastion](docs/evidence/break-glass-test.md)
 - [Sentinel detection: run-command and repeated Key Vault denials](docs/evidence/sentinel-detection-test.md)
 - [Terraform state migrated to Azure Storage without recreating resources](docs/evidence/remote-state-migration.md)
+- [CI plan with OIDC: no stored secret, read-only identity, summarized public log](docs/evidence/ci-plan-oidc-test.md)
 
 ## Incidents
 
@@ -418,7 +442,7 @@ Real failures encountered while building this, diagnosed and documented:
 
 ## Next steps
 
-- Deploy from CI with OIDC federated credentials.
+- Apply from CI after merge, with a separate write identity and a required approval.
 - Entity mapping on the Sentinel rules (SEC-017).
 - Notify on new incidents with a Sentinel automation rule.
 - Detect deletion of policy assignments, the way an `Owner` would bypass the guardrail.

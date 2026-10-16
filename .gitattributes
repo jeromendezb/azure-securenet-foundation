@@ -1,1 +1,10 @@
-*.sh text eol=lf
+# Terraform, CI and script files always use LF line endings, on every operating
+# system. Without this, Git on Windows converts them to CRLF, and multi-line
+# values (the Sentinel queries) differ between a plan on Windows and a plan in CI.
+*.tf      text eol=lf
+*.tfvars  text eol=lf
+*.hcl     text eol=lf
+*.yml     text eol=lf
+*.yaml    text eol=lf
+*.sh      text eol=lf
+*.kql     text eol=lf

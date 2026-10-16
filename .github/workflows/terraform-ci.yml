@@ -52,3 +52,55 @@ jobs:
           docker run --rm -v "${{ github.workspace }}:/tf"
           bridgecrew/checkov:3.2.20
           -d /tf --compact --quiet
+
+  # Runs terraform plan against Azure on pull requests (ADR-006).
+  # Authenticates with OIDC: no Azure secret is stored in GitHub.
+  plan:
+    name: Terraform plan
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    needs: validate
+
+    permissions:
+      contents: read
+      id-token: write # lets this job request a signed OIDC token from GitHub
+
+    env:
+      ARM_USE_OIDC: "true"
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.16.2
+          terraform_wrapper: false
+
+      # The workload reads the SSH public key from a file. The runner is a clean
+      # machine, so the key is written from a repository variable. It is the public
+      # half only; the private key never leaves the operator's workstation.
+      - name: Provide the SSH public key
+        env:
+          SSH_PUBLIC_KEY: ${{ vars.SSH_PUBLIC_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_PUBLIC_KEY" > ~/.ssh/securenet_lab.pub
+
+      # The repository is public, so the log is public. Only the list of
+      # resource actions and the summary line are printed, not attribute values.
+      - name: Plan governance
+        run: |
+          terraform -chdir=governance init -input=false
+          terraform -chdir=governance plan -input=false -lock-timeout=5m -out=tfplan > /dev/null
+          terraform -chdir=governance show -no-color tfplan | grep -E '^  # |^Plan:|^No changes' || true
+
+      - name: Plan workload
+        run: |
+          terraform init -input=false
+          terraform plan -input=false -lock-timeout=5m -out=tfplan > /dev/null
+          terraform show -no-color tfplan | grep -E '^  # |^Plan:|^No changes' || true
