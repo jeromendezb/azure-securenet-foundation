@@ -81,6 +81,16 @@ jobs:
           terraform_version: 1.16.2
           terraform_wrapper: false
 
+      # The workload reads the SSH public key from a file. The runner is a clean
+      # machine, so the key is written from a repository variable. It is the public
+      # half only; the private key never leaves the operator's workstation.
+      - name: Provide the SSH public key
+        env:
+          SSH_PUBLIC_KEY: ${{ vars.SSH_PUBLIC_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_PUBLIC_KEY" > ~/.ssh/securenet_lab.pub
+
       # The repository is public, so the log is public. Only the list of
       # resource actions and the summary line are printed, not attribute values.
       - name: Plan governance
