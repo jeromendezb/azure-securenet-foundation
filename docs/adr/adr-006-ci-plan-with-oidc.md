@@ -34,8 +34,9 @@ The pipeline authenticates with OpenID Connect. On every run, GitHub issues a
 short-lived token signed by GitHub that states which repository and which
 event the run belongs to. Entra ID checks the signature against a federated
 credential and returns an Azure access token valid for minutes. Nothing is
-stored in GitHub except non-secret identifiers (client ID, tenant ID,
-subscription ID).
+stored in GitHub except identifiers (client ID, tenant ID, subscription ID).
+None of them is a credential, but they are stored as GitHub secrets so that
+GitHub masks them in the public logs.
 
 ### 2. A user-assigned managed identity
 
@@ -48,12 +49,14 @@ hold a client secret, so a "temporary" secret can never be added later.
 The federated credential accepts exactly one subject:
 
 ```
-repo:jeromendezb/azure-securenet-foundation:pull_request
+repo:jeromendezb@294006608/azure-securenet-foundation@1374980134:pull_request
 ```
 
-Runs from other repositories or from pushes to any branch are rejected by
-Entra ID. Pull requests from forks never receive a token: GitHub does not
-grant them permission to request one.
+The subject includes GitHub's immutable owner and repository IDs. A
+repository deleted and re-created with the same name gets a new ID and does
+not match. Runs from other repositories or from pushes to any branch are
+rejected by Entra ID. Pull requests from forks never receive a token: GitHub
+does not grant them permission to request one.
 
 ### 4. Read-only, plus the state lock
 
@@ -80,6 +83,13 @@ Plan: 1 to add, 0 to change, 1 to destroy.
 ```
 
 That is what a reviewer needs to stop a destructive change.
+
+### 7. The SSH public key comes from a repository variable
+
+The workload reads the SSH public key from a file on the machine that runs
+Terraform. The runner is a clean machine, so the job writes the key from the
+`SSH_PUBLIC_KEY` repository variable before planning. It is the public half
+only; the private key never leaves the operator's workstation.
 
 ## Alternatives considered
 
@@ -121,8 +131,9 @@ anything.
   Mitigation: only branches of this repository can obtain the token, and only
   collaborators can push branches; forks cannot.
 - **The plan may need permissions beyond `Reader`.** Some resources read
-  values that `Reader` cannot access. Mitigation: grant the narrowest extra
-  permission only when a test shows it is needed, and document it here.
+  values that `Reader` cannot access. In testing, `Reader` plus the state role
+  was enough for both roots. If a future resource needs more, grant the
+  narrowest extra permission and document it here.
 - **Apply is still manual,** so the operator can still apply something different
   from what was reviewed. Mitigation: apply only from `main` after merge.
 
