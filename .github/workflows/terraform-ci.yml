@@ -97,10 +97,10 @@ jobs:
         run: |
           terraform -chdir=governance init -input=false
           terraform -chdir=governance plan -input=false -lock-timeout=5m -out=tfplan > /dev/null
-          terraform -chdir=governance show -no-color tfplan | grep -E '^\s+# |^Plan:|^No changes' || true
+          terraform -chdir=governance show -no-color tfplan | grep -E '^  # |^Plan:|^No changes' || true
 
       - name: Plan workload
         run: |
           terraform init -input=false
           terraform plan -input=false -lock-timeout=5m -out=tfplan > /dev/null
-          terraform show -no-color tfplan | grep -E '^\s+# |^Plan:|^No changes' || true
+          terraform show -no-color tfplan | grep -E '^  # |^Plan:|^No changes' || true
