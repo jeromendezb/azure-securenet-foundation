@@ -18,14 +18,15 @@ resource "azurerm_user_assigned_identity" "ci" {
 }
 
 # Trust rule: accept tokens signed by GitHub only for pull requests of this
-# repository. Pushes to branches, other repositories and forks are rejected.
+# repository. The subject uses GitHub's immutable owner and repository IDs, so
+# a repository re-created later with the same name does not match.
 resource "azurerm_federated_identity_credential" "github_pull_requests" {
   name                = "github-pull-requests"
   resource_group_name = azurerm_resource_group.cicd.name
   parent_id           = azurerm_user_assigned_identity.ci.id
   audience            = ["api://AzureADTokenExchange"]
   issuer              = "https://token.actions.githubusercontent.com"
-  subject             = "repo:jeromendezb/azure-securenet-foundation:pull_request"
+  subject             = "repo:jeromendezb@294006608/azure-securenet-foundation@1374980134:pull_request"
 }
 
 # Read every resource to compare it with the code. Cannot change anything.
