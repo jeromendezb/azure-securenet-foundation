@@ -20,15 +20,20 @@ resource "azurerm_sentinel_alert_rule_scheduled" "vm_run_command" {
   severity                   = "High"
   tactics                    = ["Execution"]
 
+  # AzureActivity arrives 3 to 20 minutes after the event (measured: 9-10 min,
+  # SEC-020). Filtering by TimeGenerated over 5 minutes missed late events.
+  # The query looks back 1 hour by TimeGenerated, but only keeps events that
+  # arrived in the last 5 minutes, so each event is seen exactly once.
   query = <<-QUERY
     AzureActivity
+    | where ingestion_time() > ago(5m)
     | where OperationNameValue =~ "MICROSOFT.COMPUTE/VIRTUALMACHINES/RUNCOMMAND/ACTION"
     | where ActivityStatusValue in ("Success", "Failure")
     | project TimeGenerated, Caller, CallerIpAddress, ActivityStatusValue, _ResourceId
   QUERY
 
   query_frequency   = "PT5M"
-  query_period      = "PT5M"
+  query_period      = "PT1H"
   trigger_operator  = "GreaterThan"
   trigger_threshold = 0
 
