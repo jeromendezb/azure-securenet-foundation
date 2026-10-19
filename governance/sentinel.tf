@@ -31,6 +31,32 @@ resource "azurerm_sentinel_alert_rule_scheduled" "vm_run_command" {
   query_period      = "PT5M"
   trigger_operator  = "GreaterThan"
   trigger_threshold = 0
+
+  # Entities: who ran the command, from which IP, on which VM (SEC-017).
+  # Each column_name must be a column this rule's query returns.
+  entity_mapping {
+    entity_type = "Account"
+    field_mapping {
+      identifier  = "FullName"
+      column_name = "Caller"
+    }
+  }
+
+  entity_mapping {
+    entity_type = "IP"
+    field_mapping {
+      identifier  = "Address"
+      column_name = "CallerIpAddress"
+    }
+  }
+
+  entity_mapping {
+    entity_type = "AzureResource"
+    field_mapping {
+      identifier  = "ResourceId"
+      column_name = "_ResourceId"
+    }
+  }
 }
 
 # Detects repeated Key Vault access denials from the same identity (ADR-004).
@@ -51,12 +77,39 @@ resource "azurerm_sentinel_alert_rule_scheduled" "kv_repeated_denials" {
     | where ResourceProvider == "MICROSOFT.KEYVAULT" and Category == "AuditEvent"
     | where httpStatusCode_d == 403
     | extend Identity = coalesce(column_ifexists("identity_claim_upn_s", ""), tostring(identity_claim_oid_g), CallerIPAddress)
-    | summarize Denials = count(), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated), CallerIPs = make_set(CallerIPAddress) by Identity, Resource
+    | summarize Denials = count(), DistinctIPs = dcount(CallerIPAddress), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated), CallerIPs = make_set(CallerIPAddress), VaultId = take_any(_ResourceId) by Identity, Resource
     | where Denials >= 5
+    | extend FirstCallerIP = tostring(CallerIPs[0])
   QUERY
 
   query_frequency   = "PT10M"
   query_period      = "PT10M"
   trigger_operator  = "GreaterThan"
   trigger_threshold = 0
+
+  # Entities: who was denied, from which IP, on which vault (SEC-017).
+  # The summarize drops the raw columns, so these map to the columns it creates.
+  entity_mapping {
+    entity_type = "Account"
+    field_mapping {
+      identifier  = "FullName"
+      column_name = "Identity"
+    }
+  }
+
+  entity_mapping {
+    entity_type = "IP"
+    field_mapping {
+      identifier  = "Address"
+      column_name = "FirstCallerIP"
+    }
+  }
+
+  entity_mapping {
+    entity_type = "AzureResource"
+    field_mapping {
+      identifier  = "ResourceId"
+      column_name = "VaultId"
+    }
+  }
 }
