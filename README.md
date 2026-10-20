@@ -184,7 +184,7 @@ incidents in Microsoft Sentinel
 | Rule | Logic | Severity | Triage question |
 |---|---|---|---|
 | Run Command executed | Every `RUNCOMMAND/ACTION` ending in `Success` or `Failure`, selected by arrival time (`ingestion_time()`) over a 1-hour lookback | High | Is there an open ticket (test or break-glass) that explains it? |
-| Repeated Key Vault access denials | 5 or more `403` from the same identity in 10 minutes | Medium | Is the identity known, and did a recent change break its network path or role? |
+| Repeated Key Vault access denials | 5 or more `403` from the same identity in a 25-minute window, evaluated every 5 minutes | Medium | Is the identity known, and did a recent change break its network path or role? |
 
 The workspace lives outside the workload root so that `terraform destroy`
 never deletes the logs that explain what happened. A single `403` does not
@@ -203,7 +203,10 @@ name through Entra ID (SEC-017).
 **Late events.** `AzureActivity` arrived 9 to 10 minutes after the event in
 testing. A 5-minute window by `TimeGenerated` missed every run-command, so the
 rule selects events by arrival time instead (SEC-020,
-[evidence](docs/evidence/sentinel-entity-mapping-test.md)).
+[evidence](docs/evidence/sentinel-entity-mapping-test.md)). Key Vault events
+arrived 3 to 5 minutes late, so the denial rule uses overlapping windows: a
+25-minute window every 5 minutes covers the detection window, the delay and
+the time between runs ([evidence](docs/evidence/sentinel-kv-rule-latency-test.md)).
 
 ## Continuous integration
 
@@ -408,14 +411,17 @@ layer and the policy in `governance/` stay, on purpose.
 - **Writing a secret requires Bastion and an interactive session on `vm-mgmt`.**
   Accepted for the lab ([ADR-002](docs/adr/adr-002-keyvault-secret-write-access.md));
   production target is a VPN or a CI runner inside the VNet.
-- **The Key Vault rule still counts by `TimeGenerated`.** It is exposed to the
-  same ingestion delay that broke the run-command rule (SEC-020). It fired in
-  testing, but a delay longer than its 10-minute window would hide denials.
+- **One burst of Key Vault denials creates several incidents.** Overlapping
+  windows see it in more than one run. Grouping alerts by account is accepted
+  by Azure on apply but not persisted, so it was removed (#38).
+- **The Key Vault threshold is looser than designed.** 5 denials in 25 minutes,
+  not in 10, and never baselined against normal traffic.
 - **The 403 threshold is not baselined.** Five denials in ten minutes is a
   conservative starting value, not measured against normal traffic.
 - **No notification.** Incidents are created in Sentinel, but no automation
   sends them anywhere; someone has to look. Defender for Cloud alerts do reach
-  the security contact by email (SEC-021); Sentinel incidents do not.
+  the security contact by email (SEC-021); Sentinel incidents do not. With only
+  the free CSPM enabled, Defender generates few alerts.
 - **Detection delay of 7 to 10 minutes** between the event and the incident in
   the tests, from log ingestion plus the rule schedule.
 - **Defender for Cloud runs the free CSPM only.** The paid plans it recommends
@@ -453,6 +459,7 @@ layer and the policy in `governance/` stay, on purpose.
 - [CI plan with OIDC: no stored secret, read-only identity, summarized public log](docs/evidence/ci-plan-oidc-test.md)
 - [Sentinel entity mapping and late-arriving events](docs/evidence/sentinel-entity-mapping-test.md)
 - [Defender for Cloud recommendations triage](docs/evidence/defender-cspm-triage.md)
+- [Key Vault denial rule and ingestion delay](docs/evidence/sentinel-kv-rule-latency-test.md)
 
 ## Incidents
 
@@ -463,6 +470,6 @@ Real failures encountered while building this, diagnosed and documented:
 ## Next steps
 
 - Apply from CI after merge, with a separate write identity and a required approval.
-- Select Key Vault denials by arrival time, as the run-command rule does.
+- Find why the Key Vault rule's alert grouping is not persisted (#38).
 - Notify on new incidents with a Sentinel automation rule.
 - Detect deletion of policy assignments, the way an `Owner` would bypass the guardrail.
