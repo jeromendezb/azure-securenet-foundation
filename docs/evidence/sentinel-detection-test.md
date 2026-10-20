@@ -123,6 +123,7 @@ for #21.
    Detection" (Fusion) appeared after onboarding. It is managed by Microsoft,
    not by this repository, and is not drift.
 7. **Classification matters for tuning.** Incident #2 was first closed as
-   *False positive* and then corrected to *Informational, expected activity*.
-   The rule fired correctly on real denials; marking it a false positive would
-   later read as a noisy rule.
+   *False positive*. The rule fired correctly on real denials; marking it a
+   false positive would later read as a noisy rule. The correction to
+   *Informational, expected activity* was only saved on 2026-10-19
+   ([evidence](sentinel-entity-mapping-test.md), finding 6).

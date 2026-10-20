@@ -183,7 +183,7 @@ incidents in Microsoft Sentinel
 
 | Rule | Logic | Severity | Triage question |
 |---|---|---|---|
-| Run Command executed | Every `RUNCOMMAND/ACTION` ending in `Success` or `Failure` | High | Is there an open ticket (test or break-glass) that explains it? |
+| Run Command executed | Every `RUNCOMMAND/ACTION` ending in `Success` or `Failure`, selected by arrival time (`ingestion_time()`) over a 1-hour lookback | High | Is there an open ticket (test or break-glass) that explains it? |
 | Repeated Key Vault access denials | 5 or more `403` from the same identity in 10 minutes | Medium | Is the identity known, and did a recent change break its network path or role? |
 
 The workspace lives outside the workload root so that `terraform destroy`
@@ -194,6 +194,16 @@ link did during the private endpoint test.
 Both rules were tested end to end with real events: each produced an
 incident in Sentinel, which was triaged and closed with a reference to the
 ticket ([evidence](docs/evidence/sentinel-detection-test.md)).
+
+**Entities.** Each rule maps the account, the source IP and the Azure resource
+from its own query columns, so the incident shows who, from where and on what
+without opening the raw events. Sentinel resolves an object ID to the user's
+name through Entra ID (SEC-017).
+
+**Late events.** `AzureActivity` arrived 9 to 10 minutes after the event in
+testing. A 5-minute window by `TimeGenerated` missed every run-command, so the
+rule selects events by arrival time instead (SEC-020,
+[evidence](docs/evidence/sentinel-entity-mapping-test.md)).
 
 ## Continuous integration
 
@@ -398,14 +408,19 @@ layer and the policy in `governance/` stay, on purpose.
 - **Writing a secret requires Bastion and an interactive session on `vm-mgmt`.**
   Accepted for the lab ([ADR-002](docs/adr/adr-002-keyvault-secret-write-access.md));
   production target is a VPN or a CI runner inside the VNet.
-- **Incidents carry no entities.** The rules do not map columns to accounts, IPs
-  or resources yet, so the analyst reads them from the raw events. Tracked as SEC-017.
+- **The Key Vault rule still counts by `TimeGenerated`.** It is exposed to the
+  same ingestion delay that broke the run-command rule (SEC-020). It fired in
+  testing, but a delay longer than its 10-minute window would hide denials.
 - **The 403 threshold is not baselined.** Five denials in ten minutes is a
   conservative starting value, not measured against normal traffic.
 - **No notification.** Incidents are created in Sentinel, but no automation
-  sends them anywhere; someone has to look.
+  sends them anywhere; someone has to look. Defender for Cloud has no security
+  contact either (SEC-021).
 - **Detection delay of 7 to 10 minutes** between the event and the incident in
   the tests, from log ingestion plus the rule schedule.
+- **Defender for Cloud runs the free CSPM only.** The paid plans it recommends
+  (Resource Manager, Storage, CSPM) are not enabled, for cost
+  ([triage](docs/evidence/defender-cspm-triage.md)).
 - **One guardrail only.** Azure Policy covers Key Vault public network access;
   other services that can be exposed (Storage, SQL) are not covered yet.
 - **Repair VM recovery is documented but untested.** If the VM agent is down,
@@ -433,6 +448,8 @@ layer and the policy in `governance/` stay, on purpose.
 - [Sentinel detection: run-command and repeated Key Vault denials](docs/evidence/sentinel-detection-test.md)
 - [Terraform state migrated to Azure Storage without recreating resources](docs/evidence/remote-state-migration.md)
 - [CI plan with OIDC: no stored secret, read-only identity, summarized public log](docs/evidence/ci-plan-oidc-test.md)
+- [Sentinel entity mapping and late-arriving events](docs/evidence/sentinel-entity-mapping-test.md)
+- [Defender for Cloud recommendations triage](docs/evidence/defender-cspm-triage.md)
 
 ## Incidents
 
@@ -443,7 +460,7 @@ Real failures encountered while building this, diagnosed and documented:
 ## Next steps
 
 - Apply from CI after merge, with a separate write identity and a required approval.
-- Entity mapping on the Sentinel rules (SEC-017).
+- Security contact and alert notifications in Defender for Cloud (SEC-021).
+- Select Key Vault denials by arrival time, as the run-command rule does.
 - Notify on new incidents with a Sentinel automation rule.
 - Detect deletion of policy assignments, the way an `Owner` would bypass the guardrail.
-- Microsoft Defender for Cloud (free tier) for posture recommendations.
