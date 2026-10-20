@@ -74,3 +74,8 @@ fix took the value from the signed-in account
 contact back from Azure caught the first error.
 
 Recommendations #5, #8 and #9 turn healthy at Defender's next assessment.
+
+The contact receives Defender for Cloud alerts only. Those come from the paid
+protection plans, which are not enabled (#1, #2 and #4 above), so in this lab
+it will rarely receive anything. Microsoft Sentinel incidents are a separate
+product and are not sent to this contact.
