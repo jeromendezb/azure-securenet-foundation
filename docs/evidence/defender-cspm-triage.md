@@ -48,3 +48,29 @@ assessed the VMs or the Key Vault, so only long-lived resources appear.
 3. **New resources are not assessed immediately.** The lab's VMs and Key Vault
    did not appear a few hours after deployment. Assessing them requires the
    workload to stay deployed longer than one lab session.
+
+## Fix: security contact (SEC-021)
+
+`azurerm_security_center_contact` in [`governance/defender.tf`](../../governance/defender.tf):
+email from a sensitive variable (`TF_VAR_security_contact_email` locally, the
+`SECURITY_CONTACT_EMAIL` secret in CI), high severity alert notifications on,
+notifications to subscription owners on. The email is not in the repository.
+
+Read back from Azure after apply:
+
+```
+az security contact list --query "[].{email:emails, alertas:alertNotifications.state, owners:notificationsByRole.state}" -o table
+
+Email              Alertas    Owners
+-----------------  ---------  --------
+<operator email>   On         On
+```
+
+The first apply stored a placeholder address copied from the instructions,
+and reported success. A second attempt failed with `400 BadRequest` (invalid
+email format) because the value still contained placeholder characters. The
+fix took the value from the signed-in account
+(`az account show --query user.name`) instead of typing it. Only reading the
+contact back from Azure caught the first error.
+
+Recommendations #5, #8 and #9 turn healthy at Defender's next assessment.

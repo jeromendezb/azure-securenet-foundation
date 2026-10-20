@@ -414,13 +414,16 @@ layer and the policy in `governance/` stay, on purpose.
 - **The 403 threshold is not baselined.** Five denials in ten minutes is a
   conservative starting value, not measured against normal traffic.
 - **No notification.** Incidents are created in Sentinel, but no automation
-  sends them anywhere; someone has to look. Defender for Cloud has no security
-  contact either (SEC-021).
+  sends them anywhere; someone has to look. Defender for Cloud alerts do reach
+  the security contact by email (SEC-021); Sentinel incidents do not.
 - **Detection delay of 7 to 10 minutes** between the event and the incident in
   the tests, from log ingestion plus the rule schedule.
 - **Defender for Cloud runs the free CSPM only.** The paid plans it recommends
   (Resource Manager, Storage, CSPM) are not enabled, for cost
   ([triage](docs/evidence/defender-cspm-triage.md)).
+- **The security contact has no phone number.** Checkov `CKV_AZURE_20` is
+  skipped: the phone is only for Microsoft to report a confirmed compromise.
+  Production uses a security team number, not a personal one.
 - **One guardrail only.** Azure Policy covers Key Vault public network access;
   other services that can be exposed (Storage, SQL) are not covered yet.
 - **Repair VM recovery is documented but untested.** If the VM agent is down,
@@ -460,7 +463,6 @@ Real failures encountered while building this, diagnosed and documented:
 ## Next steps
 
 - Apply from CI after merge, with a separate write identity and a required approval.
-- Security contact and alert notifications in Defender for Cloud (SEC-021).
 - Select Key Vault denials by arrival time, as the run-command rule does.
 - Notify on new incidents with a Sentinel automation rule.
 - Detect deletion of policy assignments, the way an `Owner` would bypass the guardrail.
