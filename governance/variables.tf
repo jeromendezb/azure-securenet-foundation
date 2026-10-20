@@ -14,3 +14,9 @@ variable "location" {
   type        = string
   default     = "eastus"
 }
+
+variable "security_contact_email" {
+  description = "Email that receives Defender for Cloud alerts. Set through TF_VAR_security_contact_email; never stored in the repository."
+  type        = string
+  sensitive   = true
+}
