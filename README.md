@@ -343,12 +343,13 @@ with `ignore_changes`, so a manual change to them still shows up as drift.
 Azure Bastion is disabled by default because it bills hourly. Enable it only
 when interactive access is needed: `terraform apply -var="enable_bastion=true"`.
 
-**Why not the Service Principal:** this configuration creates role
-assignments (`Microsoft.Authorization/roleAssignments/write`). The existing
-Service Principal has `Contributor`, which cannot create role assignments,
-so `apply` would fail with `403 AuthorizationFailed`. Granting it `Owner`
-would let an automation credential give any role to anyone, so that option
-was rejected.
+**Why not a Service Principal:** this configuration creates role
+assignments (`Microsoft.Authorization/roleAssignments/write`). A service
+principal with `Contributor` cannot create them (`403 AuthorizationFailed`),
+and granting it `Owner` would let an automation credential give any role
+to anyone. The service principal originally created for this lab was
+never used for that reason, and was removed in the October 2026 access
+review (TKT-001, TKT-002).
 
 **CI:** every pull request runs `terraform plan` from GitHub Actions with an
 OIDC identity that can only read (see [Continuous integration](#continuous-integration)).
