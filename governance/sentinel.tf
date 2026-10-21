@@ -92,19 +92,6 @@ resource "azurerm_sentinel_alert_rule_scheduled" "kv_repeated_denials" {
   trigger_operator  = "GreaterThan"
   trigger_threshold = 0
 
-  #  # Overlapping runs see the same burst more than once. Alerts for the same
-  # account within an hour go into one incident instead of several.
-  incident {
-    create_incident_enabled = true
-
-    grouping {
-      enabled                 = true
-      lookback_duration       = "PT1H"
-      entity_matching_method  = "Selected"
-      by_entities             = ["Account"]
-      reopen_closed_incidents = false
-    }
-  }
   # Entities: who was denied, from which IP, on which vault (SEC-017).
   # The summarize drops the raw columns, so these map to the columns it creates.
   entity_mapping {
