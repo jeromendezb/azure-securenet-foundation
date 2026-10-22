@@ -98,3 +98,13 @@ variable "monitoring_workspace_rg" {
   type        = string
   default     = "rg-securenet-monitoring-dev-eus-001"
 }
+
+variable "operators_group_object_id" {
+  description = "Object ID of the sg-securenet-operators Entra ID group (TKT-004)."
+  type        = string
+}
+
+variable "developers_group_object_id" {
+  description = "Object ID of the sg-securenet-developers Entra ID group (TKT-004)."
+  type        = string
+}
