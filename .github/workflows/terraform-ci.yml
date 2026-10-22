@@ -71,6 +71,8 @@ jobs:
       ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       TF_VAR_security_contact_email: ${{ secrets.SECURITY_CONTACT_EMAIL }}
+      TF_VAR_operators_group_object_id: ${{ vars.OPERATORS_GROUP_OBJECT_ID }}
+      TF_VAR_developers_group_object_id: ${{ vars.DEVELOPERS_GROUP_OBJECT_ID }}
 
     steps:
       - name: Check out the repository
