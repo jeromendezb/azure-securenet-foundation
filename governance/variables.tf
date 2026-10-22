@@ -20,3 +20,13 @@ variable "security_contact_email" {
   type        = string
   sensitive   = true
 }
+
+variable "operators_group_object_id" {
+  description = "Object ID of the sg-securenet-operators Entra ID group (TKT-004)."
+  type        = string
+}
+
+variable "developers_group_object_id" {
+  description = "Object ID of the sg-securenet-developers Entra ID group (TKT-004)."
+  type        = string
+}
